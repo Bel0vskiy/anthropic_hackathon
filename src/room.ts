@@ -286,32 +286,33 @@ export class Room {
         sat = Math.min(0.9, sat * 1.7);
         break;
       case "stark":
-        sat = 0.2;
-        light = 0.2;
+        sat = lerp(sat, 0.2, 0.6);
+        light = lerp(light, 0.2, 0.6);
         break;
     }
 
-    // Weather tints the substrate — it outweighs mood, softly.
+    // Weather leans on the light — pulled 60% toward its own cast, but the
+    // mood's contribution underneath stays visible rather than pinned.
     switch (s.weather) {
       case "overcast":
-        sat = 0.18;
-        light = 0.5;
+        sat = lerp(sat, 0.18, 0.6);
+        light = lerp(light, 0.5, 0.6);
         break;
       case "rain":
-        sat = 0.42;
-        light = 0.44;
+        sat = lerp(sat, 0.42, 0.6);
+        light = lerp(light, 0.44, 0.6);
         break;
       case "storm":
-        sat = 0.55;
-        light = 0.36;
+        sat = lerp(sat, 0.55, 0.6);
+        light = lerp(light, 0.36, 0.6);
         break;
       case "snow":
-        sat = 0.2;
-        light = 0.68;
+        sat = lerp(sat, 0.2, 0.6);
+        light = lerp(light, 0.68, 0.6);
         break;
       case "fog":
-        sat = 0.16;
-        light = 0.58;
+        sat = lerp(sat, 0.16, 0.6);
+        light = lerp(light, 0.58, 0.6);
         break;
       case "clear":
         sat = Math.max(sat, 0.55);

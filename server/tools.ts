@@ -34,16 +34,16 @@ export const roomTools: Anthropic.Tool[] = [
   {
     name: "set_weather",
     description:
-      "Change the weather of the room. Weather is the room's larger mood — bring it when the conversation genuinely warrants it, not every turn.",
+      "Change the weather of the room. Weather is the room's larger mood — bring it when the conversation genuinely warrants it, not every turn. Weather tints the light; it never fully covers the mood color the room is already holding.",
     input_schema: {
       type: "object",
       properties: {
-        state: {
+        weather: {
           type: "string",
           enum: ["clear", "overcast", "rain", "storm", "snow", "fog"],
         },
       },
-      required: ["state"],
+      required: ["weather"],
     },
   },
   {
