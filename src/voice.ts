@@ -39,16 +39,32 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
     return null;
   });
 
+  // A mic failure used to be rethrown into an unhandled rejection — invisible.
+  // Now it's a breadcrumb, and stop() can name it.
+  let micError: string | null = null;
+
   return {
     async stop(): Promise<{ transcript: string; mood: MoodReading | null }> {
       const blob = await new Promise<Blob | null>((resolve) => {
-        if (!recorder || stopped) {
-          lastTrace = "no recording captured (mic not ready?)";
-          return resolve(null);
-        }
-        stopped = true;
-        recorder.onstop = () => resolve(new Blob(chunks));
-        recorder.stop();
+        const t0 = Date.now();
+        const tryStop = () => {
+          if (recorder && !stopped) {
+            stopped = true;
+            recorder.onstop = () => resolve(new Blob(chunks));
+            recorder.stop();
+            return;
+          }
+          // The recorder may still be opening — wait briefly, then give up.
+          if (!micError && Date.now() - t0 < 3000) {
+            setTimeout(tryStop, 100);
+            return;
+          }
+          lastTrace = micError
+            ? `mic failed: ${micError}`
+            : "no recording captured (mic never opened)";
+          resolve(null);
+        };
+        tryStop();
       });
 
       const [transcript, mood] = await Promise.all([
@@ -95,7 +111,8 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
     samples = new Uint8Array(analyser.fftSize);
   })().catch((err) => {
     console.error("[voice] mic denied:", err);
-    throw new Error("microphone unavailable");
+    micError = err?.message ?? String(err);
+    lastTrace = `mic failed: ${micError}`;
   });
 }
 
