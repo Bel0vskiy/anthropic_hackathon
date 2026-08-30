@@ -391,15 +391,18 @@ function mergeMoods(
 ): MoodReading | null {
   if (!voice) return text;
   if (!text) return voice;
-  const wv = voice.confidence + text.confidence || 1;
+  // The text classifier reads ~0.99 certainty on any clear sentence, so raw
+  // confidence weighting lets the words drown the voice. Tone is the channel
+  // you can't fake — when the mic speaks, it gets the bigger vote.
+  const wv = voice.confidence * 1.6 + text.confidence || 1;
   // Divergence only counts when both readings are sure enough, and the gap
   // between them is wide — a flat voice under positive words, or the reverse.
   const sure = text.confidence > 0.8 && voice.confidence > 0.5;
   const wordsBetter = sure && text.valence > 0.3 && text.valence - voice.valence > 0.45;
   const voiceBetter = sure && text.valence < -0.3 && voice.valence - text.valence > 0.45;
   return {
-    valence: (voice.valence * voice.confidence + text.valence * text.confidence) / wv,
-    energy: (voice.energy * voice.confidence + text.energy * text.confidence) / wv,
+    valence: (voice.valence * (voice.confidence * 1.6) + text.valence * text.confidence) / wv,
+    energy: (voice.energy * (voice.confidence * 1.6) + text.energy * text.confidence) / wv,
     // Tone wins ties for the label: it's the channel you can't fake.
     label: voice.confidence >= text.confidence ? voice.label : text.label,
     confidence: Math.max(voice.confidence, text.confidence),

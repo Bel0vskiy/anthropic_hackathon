@@ -9,6 +9,17 @@ import type { MoodReading } from "./mood";
 
 const TARGET_RATE = 16000;
 
+// One AudioContext for the whole session: Chrome caps how many a page may
+// create, and a fresh one per mic turn silently hit that cap.
+let audioCtx: AudioContext | null = null;
+function sharedCtx(): AudioContext {
+  if (!audioCtx || audioCtx.state === "closed") {
+    audioCtx = new AudioContext();
+  }
+  if (audioCtx.state === "suspended") void audioCtx.resume();
+  return audioCtx;
+}
+
 /** Breadcrumbs from the last voice-mood attempt — the room can show this
  *  directly, so a failure is visible without opening devtools. */
 let lastTrace = "no attempt";
@@ -31,7 +42,6 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
   // The orb listens here: an analyser on the live stream turns your voice
   // into a single number the room can lean with.
   let analyser: AnalyserNode | null = null;
-  let analyserCtx: AudioContext | null = null;
   let samples: Uint8Array | null = null;
 
   // A mic failure used to be rethrown into an unhandled rejection — invisible.
@@ -60,9 +70,9 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
     window.addEventListener("beforeunload", () => stream.getTracks().forEach((t) => t.stop()));
     recorder.start();
 
-    analyserCtx = new AudioContext();
-    const source = analyserCtx.createMediaStreamSource(stream);
-    analyser = analyserCtx.createAnalyser();
+    const ctx = sharedCtx();
+    const source = ctx.createMediaStreamSource(stream);
+    analyser = ctx.createAnalyser();
     analyser.fftSize = 512;
     source.connect(analyser);
     samples = new Uint8Array(analyser.fftSize);
@@ -111,9 +121,7 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
           return null;
         }) : Promise.resolve(null),
       ]);
-      void analyserCtx?.close();
-      analyser = null;
-      analyserCtx = null;
+      analyser = null; // the context is shared — only the node is let go
       return { transcript, mood };
     },
 
@@ -129,27 +137,6 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
       return Math.min(1, Math.sqrt(sum / samples.length) * 4);
     },
   };
-
-  void (async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    recorder = new MediaRecorder(stream);
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
-    window.addEventListener("beforeunload", () => stream.getTracks().forEach((t) => t.stop()));
-    recorder.start();
-
-    analyserCtx = new AudioContext();
-    const source = analyserCtx.createMediaStreamSource(stream);
-    analyser = analyserCtx.createAnalyser();
-    analyser.fftSize = 512;
-    source.connect(analyser);
-    samples = new Uint8Array(analyser.fftSize);
-  })().catch((err) => {
-    console.error("[voice] mic denied:", err);
-    micError = err?.message ?? String(err);
-    lastTrace = `mic failed: ${micError}`;
-  });
 }
 
 /** Recording -> MoodReading. Decode in the browser when it can; if it can't,
@@ -159,9 +146,7 @@ async function audioBlobToMood(blob: Blob): Promise<MoodReading | null> {
   lastTrace = `clip ${blob.size}B ${blob.type || "?"}`;
   try {
     const arr = await blob.arrayBuffer();
-    const ctx = new AudioContext();
-    const decoded = await ctx.decodeAudioData(arr);
-    void ctx.close();
+    const decoded = await sharedCtx().decodeAudioData(arr);
 
     const rendered = await resampleMono(decoded, TARGET_RATE);
     const pcm = rendered.getChannelData(0).slice(0, TARGET_RATE * 20);
