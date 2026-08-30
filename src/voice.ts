@@ -1,0 +1,170 @@
+import type { MoodReading } from "./mood";
+
+// ---------------------------------------------------------------------------
+// Voice for the room: mic capture -> 16kHz PCM -> /api/voice-emotion,
+// Web Speech STT into the composer, and TTS whose pitch/rate follow the
+// room's state — the room's voice is part of its body.
+// Everything degrades silently: no mic, no STT, no sidecar => text-only.
+// ---------------------------------------------------------------------------
+
+const TARGET_RATE = 16000;
+
+export interface SpeechCapture {
+  stop(): Promise<{ transcript: string; mood: MoodReading | null }>;
+}
+
+/** Start mic capture + STT. Returns a handle to finish the turn. */
+export function startCapture(onInterim: (text: string) => void): SpeechCapture {
+  let recorder: MediaRecorder | null = null;
+  let chunks: Blob[] = [];
+  let stopped = false;
+
+  const stt = Promise.resolve(startSTT(onInterim)).catch((err) => {
+    console.error("[voice] STT unavailable:", err.message);
+    return null;
+  });
+
+  return {
+    async stop(): Promise<{ transcript: string; mood: MoodReading | null }> {
+      const blob = await new Promise<Blob | null>((resolve) => {
+        if (!recorder || stopped) return resolve(null);
+        stopped = true;
+        recorder.onstop = () => resolve(new Blob(chunks));
+        recorder.stop();
+      });
+
+      const [transcript, mood] = await Promise.all([
+        finalTranscript(stt),
+        blob ? audioBlobToMood(blob).catch((err) => {
+          console.error("[voice] emotion failed:", err);
+          return null;
+        }) : Promise.resolve(null),
+      ]);
+      return { transcript, mood };
+    },
+  };
+
+  void (async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    window.addEventListener("beforeunload", () => stream.getTracks().forEach((t) => t.stop()));
+    recorder.start();
+  })().catch((err) => {
+    console.error("[voice] mic denied:", err);
+    throw new Error("microphone unavailable");
+  });
+}
+
+/** Raw PCM bytes -> node proxy -> sidecar -> MoodReading. */
+async function audioBlobToMood(blob: Blob): Promise<MoodReading | null> {
+  const arr = await blob.arrayBuffer();
+  const ctx = new AudioContext();
+  const decoded = await ctx.decodeAudioData(arr);
+  void ctx.close();
+
+  const rendered = await resampleMono(decoded, TARGET_RATE);
+  const pcm = rendered.getChannelData(0).slice(0, TARGET_RATE * 20);
+
+  const res = await fetch(`/api/voice-emotion?sample_rate=${TARGET_RATE}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength),
+  });
+  if (!res.ok) return null;
+  const { mood } = (await res.json()) as { mood: MoodReading | null };
+  if (mood) mood.fromVoice = true;
+  return mood;
+}
+
+async function resampleMono(buffer: AudioBuffer, rate: number): Promise<AudioBuffer> {
+  const length = Math.max(1, Math.ceil(buffer.duration * rate));
+  const offline = new OfflineAudioContext(1, length, rate);
+  const src = offline.createBufferSource();
+  src.buffer = buffer;
+  src.connect(offline.destination);
+  src.start();
+  return offline.startRendering();
+}
+
+// ---- STT (Web Speech API; Chrome/Edge/Safari, not Firefox) ---------------
+
+interface RecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((e: any) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((e: any) => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+interface STTHandle {
+  rec: RecognitionLike;
+  getFinal: () => string;
+  ended: () => boolean;
+}
+
+/** Returns an STTHandle; getFinal is populated by onresult events. */
+function startSTT(onInterim: (text: string) => void): STTHandle {
+  const AnyWin = window as any;
+  const Ctor = AnyWin.SpeechRecognition ?? AnyWin.webkitSpeechRecognition;
+  if (!Ctor) throw new Error("STT unavailable");
+
+  const rec: RecognitionLike = new Ctor();
+  rec.continuous = false;
+  rec.interimResults = true;
+
+  let finalText = "";
+  let ended = false;
+  rec.onresult = (e: any) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) finalText += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    onInterim(finalText || interim);
+  };
+  rec.onend = () => {
+    ended = true;
+  };
+  rec.onerror = (e: any) => console.error("[voice] STT error:", e?.error);
+
+  rec.start();
+  return { rec, getFinal: () => finalText.trim(), ended: () => ended };
+}
+
+async function finalTranscript(
+  stt: Promise<STTHandle | null>
+): Promise<string> {
+  const handle = await stt;
+  if (!handle) return "";
+  handle.rec.stop();
+  // Wait for the recognition session to end (the engine flushes its final
+  // result just before onend), capped at 3s.
+  const t0 = Date.now();
+  while (!handle.ended() && Date.now() - t0 < 3000) {
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  await new Promise((r) => setTimeout(r, 200));
+  return handle.getFinal();
+}
+
+// ---- TTS -------------------------------------------------------------------
+
+export function speak(text: string, params: { rate: number; pitch: number }): void {
+  if (!("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = params.rate;
+  u.pitch = params.pitch;
+  u.volume = 0.9;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+
+export function stopSpeaking(): void {
+  window.speechSynthesis?.cancel();
+}

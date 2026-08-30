@@ -1,0 +1,183 @@
+:root {
+  color-scheme: dark;
+  --ink: rgba(255, 255, 255, 0.92);
+  --ink-dim: rgba(255, 255, 255, 0.55);
+  --ink-faint: rgba(255, 255, 255, 0.3);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: #0a0b10;
+  font-family: "SF Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+  color: var(--ink);
+}
+
+#room {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#chat {
+  position: relative;
+  height: 100%;
+  max-width: 620px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 20px;
+}
+
+/* ---- status strip: the machinery, quietly visible ---- */
+
+#status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+  color: var(--ink-faint);
+  padding: 4px 2px 14px;
+  user-select: none;
+}
+
+#mood-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #555;
+  transition: background 1.2s ease, box-shadow 1.2s ease;
+}
+
+#topic-label {
+  margin-left: auto;
+}
+
+#voice-toggle {
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+#voice-toggle:hover {
+  color: var(--ink-dim);
+}
+
+/* ---- messages ---- */
+
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 8px 0;
+  scrollbar-width: none;
+}
+#messages::-webkit-scrollbar {
+  display: none;
+}
+
+.msg {
+  max-width: 84%;
+  line-height: 1.65;
+  font-size: 14px;
+  animation: rise 0.5s ease both;
+}
+
+.msg.user {
+  align-self: flex-end;
+  text-align: right;
+  color: var(--ink-dim);
+}
+
+.msg.assistant {
+  align-self: flex-start;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- composer ---- */
+
+#composer {
+  display: flex;
+  gap: 10px;
+  padding-top: 14px;
+}
+
+#input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.3s ease;
+}
+
+#input:focus {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+#input::placeholder {
+  color: var(--ink-faint);
+}
+
+#composer button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  width: 46px;
+  color: var(--ink-dim);
+  font-size: 16px;
+  cursor: pointer;
+  transition: border-color 0.3s ease, color 0.3s ease;
+}
+
+#composer button:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: var(--ink);
+}
+
+#mic.live {
+  border-color: #e9b96a;
+  color: #e9b96a;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(233, 185, 106, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(233, 185, 106, 0);
+  }
+}

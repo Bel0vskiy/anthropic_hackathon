@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>the room</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="room"></canvas>
+    <main id="chat">
+      <header id="status" aria-hidden="true">
+        <span id="mood-dot"></span>
+        <span id="mood-label">…</span>
+        <button id="voice-toggle" type="button"></button>
+        <span id="topic-label"></span>
+      </header>
+      <div id="messages"></div>
+      <form id="composer">
+        <button id="mic" type="button" aria-label="record">◉</button>
+        <input
+          id="input"
+          type="text"
+          autocomplete="off"
+          placeholder="message…"
+          autofocus
+        />
+        <button type="submit" aria-label="send">↵</button>
+      </form>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
