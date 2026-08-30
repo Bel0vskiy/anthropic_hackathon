@@ -12,12 +12,11 @@
       <header id="status" aria-hidden="true">
         <span id="mood-dot"></span>
         <span id="mood-label">…</span>
-        <button id="voice-toggle" type="button"></button>
-        <span id="topic-label"></span>
       </header>
       <div id="orb-anchor" aria-hidden="true"></div>
       <div id="messages"></div>
       <form id="composer">
+        <button id="voice-toggle" type="button" aria-label="voice off">🔇</button>
         <button id="mic" type="button" aria-label="record">◉</button>
         <input
           id="input"
@@ -41,6 +40,8 @@
           spellcheck="false"
           placeholder="your name"
         />
+        <p id="gate-color-label">and what light should the room open in?</p>
+        <div id="hue-row" role="radiogroup" aria-label="room colour"></div>
         <button type="submit" id="gate-enter">enter</button>
       </form>
     </div>

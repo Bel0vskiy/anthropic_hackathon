@@ -30,10 +30,9 @@ export function addSystemNote(text: string): void {
   scrollDown();
 }
 
-export function updateStatus(moodLabel: string | null, topic: string | null): void {
+export function updateStatus(moodLabel: string | null): void {
   const dot = document.getElementById("mood-dot")!;
   const moodEl = document.getElementById("mood-label")!;
-  const topicEl = document.getElementById("topic-label")!;
   if (moodLabel) {
     moodEl.textContent = moodLabel;
     const colors: Record<string, string> = {
@@ -51,7 +50,6 @@ export function updateStatus(moodLabel: string | null, topic: string | null): vo
     dot.style.background = color;
     dot.style.boxShadow = `0 0 12px ${color}`;
   }
-  if (topic) topicEl.textContent = topic;
 }
 
 function scrollDown(): void {

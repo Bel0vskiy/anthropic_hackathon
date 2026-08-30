@@ -2,6 +2,7 @@ import { Room } from "./room";
 import { warmMood, readMood, type MoodReading } from "./mood";
 import { addUserMessage, startAssistantMessage, addSystemNote, updateStatus } from "./chat";
 import { startCapture, speak, stopSpeaking, type SpeechCapture } from "./voice";
+import { orbQuirks } from "./quirks";
 
 const sessionId = crypto.randomUUID();
 
@@ -13,10 +14,55 @@ let ttsOn = false; // flips on automatically after the first mic turn
 // the name rides along with every turn so the room knows who it's with.
 
 let userName = "";
+let userHue = 36; // amber by default
 
 const gate = document.getElementById("gate") as HTMLDivElement;
 const gateForm = document.getElementById("gate-form") as HTMLFormElement;
 const nameInput = document.getElementById("name-input") as HTMLInputElement;
+
+// --- the hue row: eight swatches, every family but none demanding blue ---
+const SWATCHES: { hue: number; name: string }[] = [
+  { hue: 18, name: "coral" },
+  { hue: 36, name: "amber" },
+  { hue: 60, name: "gold" },
+  { hue: 95, name: "moss" },
+  { hue: 170, name: "teal" },
+  { hue: 205, name: "sky" },
+  { hue: 265, name: "violet" },
+  { hue: 330, name: "rose" },
+];
+let chosenHue = 36;
+
+const hueRow = document.getElementById("hue-row") as HTMLDivElement;
+for (const s of SWATCHES) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "swatch";
+  b.dataset.hue = String(s.hue);
+  b.title = s.name;
+  b.setAttribute("aria-label", `${s.name} light`);
+  b.style.setProperty("--sw", `hsl(${s.hue}, 72%, 60%)`);
+  b.addEventListener("click", () => {
+    chosenHue = s.hue;
+    for (const el of hueRow.children) {
+      el.classList.toggle("picked", (el as HTMLElement).dataset.hue === b.dataset.hue);
+    }
+  });
+  hueRow.appendChild(b);
+}
+
+// Returning visitor: prefill their name and re-pick their nearest swatch.
+try {
+  const savedName = localStorage.getItem("room:name");
+  if (savedName) nameInput.value = savedName;
+  const savedHue = Number(localStorage.getItem("room:hue"));
+  if (Number.isFinite(savedHue) && SWATCHES.some((s) => s.hue === savedHue)) {
+    chosenHue = savedHue;
+    const picked = hueRow.querySelector<HTMLButtonElement>(`[data-hue="${savedHue}"]`);
+    picked?.classList.add("picked");
+  }
+} catch {
+  /* localStorage unavailable — fresh visit */ }
 
 gateForm.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -26,11 +72,14 @@ gateForm.addEventListener("submit", (e) => {
     return;
   }
   userName = name;
+  userHue = chosenHue;
   try {
     localStorage.setItem("room:name", name);
+    localStorage.setItem("room:hue", String(userHue));
   } catch {
     /* private mode — the room simply forgets faster */
   }
+  room.setBaseHue(userHue);
   gate.classList.add("open");
   setTimeout(() => gate.remove(), 1100);
 
@@ -38,9 +87,10 @@ gateForm.addEventListener("submit", (e) => {
   input.disabled = false;
   input.focus();
 
-  // The room notices you arrive.
+  // The room notices you arrive — and turns to its color for the first time.
   room.pulse(1);
-  addSystemNote(`hello, ${name.toLowerCase()}. the room is lit for you.`);
+  const lightName = SWATCHES.find((s) => s.hue === userHue)?.name ?? "your";
+  addSystemNote(`hello, ${name.toLowerCase()}. the room is lit ${lightName} for you.`);
 });
 
 // --- the room ---------------------------------------------------------
@@ -70,7 +120,6 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
     .then((r) => r.json())
     .then(({ topic }: { topic: string }) => {
       room.setTopic(topic);
-      updateStatus(null, topic);
     })
     .catch(() => {
       /* topic is decoration — silent failure is fine */
@@ -81,7 +130,10 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
   let mood = await readMood(message);
   mood = mergeMoods(voiceMood, mood);
   room.setMood(mood);
-  updateStatus(mood?.label ?? null, null);
+  updateStatus(mood?.label ?? null);
+
+  // Personality quirks — hearts for affection, the angry dog for anger.
+  orbQuirks(message, mood, () => room.orbPos(), () => room.pulse(1.2));
 
   const append = startAssistantMessage();
   let spoken = "";
@@ -181,10 +233,17 @@ const input = document.getElementById("input") as HTMLInputElement;
 const micBtn = document.getElementById("mic") as HTMLButtonElement;
 const voiceToggle = document.getElementById("voice-toggle") as HTMLButtonElement;
 
-voiceToggle.textContent = ttsOn ? "voice on" : "voice off";
+// Voice's only visible control: the speaker switch in the composer. It also
+// flips on by itself after the first mic turn — you spoke, it answers.
+function renderVoiceToggle(): void {
+  voiceToggle.textContent = ttsOn ? "🔊" : "🔇";
+  voiceToggle.setAttribute("aria-label", ttsOn ? "voice on" : "voice off");
+}
+renderVoiceToggle();
+
 voiceToggle.addEventListener("click", () => {
   ttsOn = !ttsOn;
-  voiceToggle.textContent = ttsOn ? "voice on" : "voice off";
+  renderVoiceToggle();
   if (!ttsOn) stopSpeaking();
 });
 
@@ -205,7 +264,7 @@ micBtn.addEventListener("click", async () => {
     input.placeholder = "message…";
     if (transcript.trim()) {
       ttsOn = true; // you spoke first — the room answers out loud
-      voiceToggle.textContent = "voice on";
+      renderVoiceToggle();
       input.value = "";
       void send(transcript.trim(), mood);
     } else {

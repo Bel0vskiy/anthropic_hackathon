@@ -1,8 +1,9 @@
 :root {
-  color-scheme: dark;
-  --ink: rgba(255, 255, 255, 0.92);
-  --ink-dim: rgba(255, 255, 255, 0.55);
-  --ink-faint: rgba(255, 255, 255, 0.3);
+  color-scheme: light;
+  --ink: rgba(24, 27, 38, 0.94);
+  --ink-dim: rgba(24, 27, 38, 0.58);
+  --ink-faint: rgba(24, 27, 38, 0.34);
+  --line: rgba(24, 27, 38, 0.16);
 }
 
 * {
@@ -15,7 +16,7 @@ html,
 body {
   height: 100%;
   overflow: hidden;
-  background: #09090e;
+  background: #e9eaf0;
   font-family: "SF Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
   color: var(--ink);
 }
@@ -61,24 +62,6 @@ body {
   border-radius: 50%;
   background: #555;
   transition: background 1.2s ease, box-shadow 1.2s ease;
-}
-
-#topic-label {
-  margin-left: auto;
-}
-
-#voice-toggle {
-  background: transparent;
-  border: none;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: var(--ink-faint);
-  cursor: pointer;
-}
-
-#voice-toggle:hover {
-  color: var(--ink-dim);
 }
 
 /* ---- the space the orb lives in ---- */
@@ -143,7 +126,7 @@ body {
 #input {
   flex: 1;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line);
   border-radius: 999px;
   padding: 12px 18px;
   font: inherit;
@@ -154,7 +137,7 @@ body {
 }
 
 #input:focus {
-  border-color: rgba(255, 255, 255, 0.35);
+  border-color: rgba(24, 27, 38, 0.4);
 }
 
 #input::placeholder {
@@ -162,12 +145,12 @@ body {
 }
 
 #input:disabled::placeholder {
-  color: rgba(255, 255, 255, 0.18);
+  color: rgba(24, 27, 38, 0.2);
 }
 
 #composer button {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--line);
   border-radius: 999px;
   width: 46px;
   color: var(--ink-dim);
@@ -177,23 +160,23 @@ body {
 }
 
 #composer button:hover {
-  border-color: rgba(255, 255, 255, 0.4);
+  border-color: rgba(24, 27, 38, 0.42);
   color: var(--ink);
 }
 
 #mic.live {
-  border-color: #e9c9a0;
-  color: #e9c9a0;
+  border-color: #d4622e;
+  color: #d4622e;
   animation: pulse 1.4s ease-in-out infinite;
 }
 
 @keyframes pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(233, 201, 160, 0.25);
+    box-shadow: 0 0 0 0 rgba(212, 98, 46, 0.22);
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(233, 201, 160, 0);
+    box-shadow: 0 0 0 8px rgba(212, 98, 46, 0);
   }
 }
 
@@ -207,7 +190,7 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(9, 9, 14, 0.55);
+  background: rgba(233, 234, 240, 0.4);
   backdrop-filter: blur(2px);
   transition: opacity 0.9s ease, backdrop-filter 1.1s ease;
 }
@@ -239,7 +222,7 @@ body {
   width: 100%;
   background: transparent;
   border: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+  border-bottom: 1px solid rgba(24, 27, 38, 0.24);
   padding: 10px 4px;
   font: inherit;
   font-size: 18px;
@@ -250,7 +233,7 @@ body {
 }
 
 #name-input:focus {
-  border-color: rgba(255, 255, 255, 0.5);
+  border-color: rgba(24, 27, 38, 0.55);
 }
 
 #name-input::placeholder {
@@ -259,7 +242,7 @@ body {
 
 #gate-enter {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(24, 27, 38, 0.24);
   border-radius: 999px;
   padding: 9px 26px;
   font: inherit;
@@ -271,8 +254,145 @@ body {
 }
 
 #gate-enter:hover {
-  border-color: rgba(255, 255, 255, 0.45);
+  border-color: rgba(24, 27, 38, 0.5);
   color: var(--ink);
+}
+
+#gate-color-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  padding-top: 10px;
+}
+
+#hue-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  padding: 4px 0 6px;
+}
+
+.swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--sw);
+  cursor: pointer;
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.swatch:hover {
+  transform: scale(1.18);
+}
+
+.swatch.picked {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(233, 234, 240, 0.9), 0 0 14px var(--sw);
+  transform: scale(1.18);
+}
+
+/* ---- quirks: hearts and other outbursts, above everything ---- */
+
+#quirks {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+}
+
+.heart-emote {
+  position: absolute;
+  transform: translate(-50%, 0);
+  animation: heart-rise 2.4s ease-out both;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.6));
+}
+
+@keyframes heart-rise {
+  0% {
+    opacity: 0;
+    margin-top: 0;
+    scale: 0.5;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    margin-top: calc(-1 * var(--rise, 90px));
+    scale: 1.15;
+  }
+}
+
+.dog-quirk {
+  position: absolute;
+  transform: translate(-50%, 0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  animation: dog-pop 4.6s ease-in-out both;
+}
+
+.dog-quirk-pic {
+  font-size: 64px;
+  position: relative;
+  filter: drop-shadow(0 4px 18px rgba(24, 27, 38, 0.25));
+  animation: dog-shake 0.5s ease-in-out 3;
+}
+
+.dog-quirk-rage {
+  position: absolute;
+  top: -6px;
+  right: -22px;
+  font-size: 26px;
+}
+
+.dog-quirk-line {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 16px;
+  max-width: 320px;
+  backdrop-filter: blur(4px);
+}
+
+@keyframes dog-pop {
+  0% {
+    opacity: 0;
+    scale: 0.6;
+  }
+  10% {
+    opacity: 1;
+    scale: 1.05;
+  }
+  16% {
+    scale: 1;
+  }
+  84% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    margin-top: -14px;
+  }
+}
+
+@keyframes dog-shake {
+  0%,
+  100% {
+    rotate: 0deg;
+  }
+  25% {
+    rotate: -7deg;
+  }
+  75% {
+    rotate: 7deg;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -20,16 +20,9 @@ type Palette = "warm" | "cool" | "dim" | "vivid" | "stark";
 type Drift = "still" | "breeze" | "gusts";
 type Topic = string | null;
 
-interface Mote {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  alpha: number;
-}
-
 interface Target {
+  // identity — the hue the room opened in, chosen at the gate
+  baseHue: number; // 0..360
   // mood-driven
   moodValence: number; // -1..1
   moodEnergy: number; // 0..1
@@ -46,8 +39,20 @@ interface Target {
 
 const MOOD_HYSTERESIS = 0.15;
 const SMOOTH = 0.035; // fraction closed per frame toward target
+const COLOR_SMOOTH = 0.018; // the light changes about twice as slow as everything else
 const SPRING_K = 0.085; // stiffness of the orb's radius spring
 const SPRING_DAMP = 0.86; // velocity retained per frame — under 1, so it settles
+
+// The color field: hue offsets from the mood's base hue, each parked at its
+// own angle around the orb and drifting on a slow orbit. Offsets are chosen
+// so a warm base yields pink / amber / cyan / violet — real range, not a
+// one-hue cast. Whatever the mood, the light never lands on a single color.
+const COLOR_SEEDS = [
+  { hueOff: -40, angle: -2.3, dist: 1.15, size: 3.2, alpha: 0.34, speed: 0.11, phase: 0 },
+  { hueOff: 30, angle: -0.6, dist: 1.35, size: 3.6, alpha: 0.3, speed: 0.08, phase: 1.7 },
+  { hueOff: 150, angle: 0.8, dist: 1.25, size: 3.4, alpha: 0.26, speed: 0.06, phase: 3.1 },
+  { hueOff: 230, angle: 2.6, dist: 1.5, size: 3.8, alpha: 0.24, speed: 0.09, phase: 4.4 },
+];
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -57,12 +62,12 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
-function lerpRGB(a: RGB, b: RGB, t: number): RGB {
-  return [
-    Math.round(lerp(a[0], b[0], t)),
-    Math.round(lerp(a[1], b[1], t)),
-    Math.round(lerp(a[2], b[2], t)),
-  ];
+/** Signed hue delta from `from` toward `to`, shortest way around the wheel. */
+function shortestHueDelta(from: number, to: number): number {
+  let d = (to - from) % 360;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
 }
 
 /** Deterministic topic hue from the one-word tag. */
@@ -96,7 +101,6 @@ function hslToRGB(hDeg: number, s: number, l: number): RGB {
 export class Room {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
-  private motes: Mote[] = [];
   private target: Target;
   private state: Target;
   private t = 0; // frame-time accumulator
@@ -107,11 +111,33 @@ export class Room {
   private r = 110;
   private vr = 0;
 
+  // And a spring on its position — the orb wanders, leans, and startles.
+  private cxo = 0; // x offset from home
+  private cyo = 0; // y offset from home
+  private ovx = 0;
+  private ovy = 0;
+
+  // The light itself is a smoothed value, not derived: every color change —
+  // mood, topic, even discrete weather/palette swaps — glides through here.
+  private auraState = { hue: 36, sat: 0.5, light: 0.5 };
+  // Curiosity, low-pass filtered — the orb sways after the cursor.
+  private leanX = 0;
+  private leanY = 0;
+  // Where the orb is this frame — quirks outside the canvas aim from here.
+  private cx = 0;
+  private cy = 0;
+
+  private mouse: { x: number; y: number; seen: number } | null = null;
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
+    window.addEventListener("mousemove", (e) => {
+      this.mouse = { x: e.clientX, y: e.clientY, seen: this.t };
+    });
 
     const start: Target = {
+      baseHue: 36, // amber until the gate says otherwise
       moodValence: 0,
       moodEnergy: 0.4,
       weather: null,
@@ -127,7 +153,6 @@ export class Room {
 
     this.resize();
     window.addEventListener("resize", () => this.resize());
-    for (let i = 0; i < 90; i++) this.motes.push(this.spawn());
     this.loop = this.loop.bind(this);
     requestAnimationFrame(this.loop);
   }
@@ -140,6 +165,16 @@ export class Room {
   }
 
   // ---- external state ------------------------------------------------
+
+  /** The hue the room opened in — chosen by the person, owned by the room. */
+  setBaseHue(h: number): void {
+    this.target.baseHue = ((h % 360) + 360) % 360;
+  }
+
+  /** Where the orb is right now, in screen px — for things orbiting outside the canvas. */
+  orbPos(): { x: number; y: number } {
+    return { x: this.cx, y: this.cy };
+  }
 
   setMood(mood: MoodReading | null): void {
     if (!mood) return;
@@ -196,28 +231,37 @@ export class Room {
   /** An elastic kick. Called when messages arrive; strength ~0..1.5. */
   pulse(strength = 1): void {
     this.vr += 16 * strength;
+    // A mild startle: the orb eases off its perch, then drifts home.
+    const a = Math.random() * Math.PI * 2;
+    const k = 2.2 * strength;
+    this.ovx += Math.cos(a) * k;
+    this.ovy += Math.sin(a) * k * 0.5;
   }
 
   // ---- color ----------------------------------------------------------
 
   /** The hue of the light behind the orb: mood bends it, topic tints it. */
-  private auraColor(): { rgb: RGB; sat: number; light: number } {
+  private auraColor(): { hue: number; sat: number; light: number } {
     const s = this.state;
     const v = s.moodValence;
     const energy = s.moodEnergy;
 
-    // Warm amber when valence is high, indigo when low — the light carries
-    // the whole spectrum, so any hue is on the table.
-    let baseHue = v > 0 ? lerp(210, 36, Math.min(1, v * 1.4)) : lerp(210, 262, Math.min(1, -v));
-    let sat = lerp(0.3, 0.62, energy);
-    let light = lerp(0.32, 0.6, v * 0.5 + 0.5);
+    // The room keeps the color it opened in. Mood swings *around* it:
+    // high valence warps the hue ~30° brighter along the wheel and lifts
+    // the light; low valence cools the saturation and dims it — but the
+    // room's hue is home, and the light always drifts back.
+    let baseHue = s.baseHue + v * 30;
+    let sat = lerp(0.45, 0.8, energy) * (v < 0 ? 0.85 : 1);
+    let light = lerp(0.44, 0.66, v * 0.5 + 0.5);
 
     switch (s.palette) {
       case "warm":
-        baseHue = baseHue > 90 ? baseHue : 36;
+        // Nudge halfway toward the warm pole, not an override — the room
+        // keeps its own color underneath.
+        baseHue += shortestHueDelta(baseHue, 36) * 0.5;
         break;
       case "cool":
-        baseHue = baseHue < 180 ? 210 : baseHue;
+        baseHue += shortestHueDelta(baseHue, 210) * 0.5;
         break;
       case "dim":
         light *= 0.55;
@@ -234,39 +278,37 @@ export class Room {
     // Weather tints the substrate — it outweighs mood, softly.
     switch (s.weather) {
       case "overcast":
-        sat = 0.12;
-        light = 0.34;
+        sat = 0.18;
+        light = 0.5;
         break;
       case "rain":
-        sat = 0.34;
-        light = 0.26;
-        break;
-      case "storm":
-        sat = 0.5;
-        light = 0.18;
-        break;
-      case "snow":
-        sat = 0.12;
-        light = 0.52;
-        break;
-      case "fog":
-        sat = 0.1;
+        sat = 0.42;
         light = 0.44;
         break;
+      case "storm":
+        sat = 0.55;
+        light = 0.36;
+        break;
+      case "snow":
+        sat = 0.2;
+        light = 0.68;
+        break;
+      case "fog":
+        sat = 0.16;
+        light = 0.58;
+        break;
       case "clear":
-        sat = Math.max(sat, 0.42);
-        light = Math.max(light, 0.42);
+        sat = Math.max(sat, 0.55);
+        light = Math.max(light, 0.56);
         break;
     }
 
     // Topic tint: a real shift of the light's hue, since the light IS the color.
     if (s.topicStrength > 0.01) {
       const tinted = lerp(baseHue, s.topicHue, s.topicStrength);
-      // Take the shorter path around the wheel toward the topic hue.
-      const tint = hslToRGB(tinted, sat, light);
-      return { rgb: tint, sat: sat * 0.9, light };
+      return { hue: tinted, sat: sat * 0.9, light };
     }
-    return { rgb: hslToRGB(baseHue, sat, light), sat, light };
+    return { hue: baseHue, sat, light };
   }
 
   // ---- rendering ------------------------------------------------------
@@ -290,11 +332,21 @@ export class Room {
       }
     }
 
-    const { rgb: aura, sat, light } = this.auraColor();
-    const [ar, ag, ab] = auraRGB(aura);
+    // The aura's color chases its target on its own clock (COLOR_SMOOTH,
+    // slower than SMOOTH) and around the short side of the hue wheel — so
+    // even an instant palette/weather swap lands as a slow bloom.
+    const colorTarget = this.auraColor();
+    const dh = shortestHueDelta(this.auraState.hue, colorTarget.hue);
+    this.auraState.hue = (this.auraState.hue + dh * COLOR_SMOOTH + 360) % 360;
+    this.auraState.sat = lerp(this.auraState.sat, colorTarget.sat, COLOR_SMOOTH);
+    this.auraState.light = lerp(this.auraState.light, colorTarget.light, COLOR_SMOOTH);
+    const hue = this.auraState.hue;
+    const sat = this.auraState.sat;
+    const light = this.auraState.light;
+    const [ar, ag, ab] = hslToRGB(hue, sat, light);
 
-    const cx = w / 2;
-    const cy = this.orbCenterY(h);
+    const homeX = w / 2;
+    const homeY = this.orbCenterY(h);
 
     // Spring: the orb is elastic in size. Capped so it stays inside the
     // space the layout reserves for it — messages must never collide.
@@ -311,25 +363,87 @@ export class Room {
     this.vr *= SPRING_DAMP;
     this.r += this.vr;
 
-    // Background.
-    ctx.fillStyle = "#09090e";
+    // Position: a second damped spring. Left alone the orb wanders on a
+    // Lissajous path sized by its energy; it leans toward the cursor like
+    // something curious, and pulse() startles it off the perch.
+    const energy = s.moodEnergy;
+    const wanderX =
+      Math.sin(this.t * 0.17 + 0.8) * (6 + energy * 30) +
+      Math.sin(this.t * 0.41) * (1.5 + energy * 4);
+    const wanderY =
+      Math.cos(this.t * 0.13) * (4 + energy * 16) +
+      Math.cos(this.t * 0.37) * (1 + energy * 3);
+
+    // Curiosity is chased slowly, so glancing the mouse around never
+    // snaps the orb — it sways after it and loses interest just as slow.
+    if (this.mouse && this.t - this.mouse.seen < 4) {
+      this.leanX = lerp(this.leanX, clamp((this.mouse.x - homeX) * 0.08, -34, 34), 0.016);
+      this.leanY = lerp(this.leanY, clamp((this.mouse.y - homeY) * 0.05, -20, 20), 0.016);
+    } else {
+      this.leanX = lerp(this.leanX, 0, 0.012);
+      this.leanY = lerp(this.leanY, 0, 0.012);
+    }
+
+    const POS_K = 0.018;
+    const POS_DAMP = 0.93;
+    this.ovx += (wanderX + this.leanX - this.cxo) * POS_K;
+    this.ovx *= POS_DAMP;
+    this.ovy += (wanderY + this.leanY - this.cyo) * POS_K;
+    this.ovy *= POS_DAMP;
+    this.cxo += this.ovx;
+    this.cyo += this.ovy;
+
+    const cx = homeX + this.cxo;
+    const cy = homeY + this.cyo;
+    this.cx = cx;
+    this.cy = cy;
+
+    // Squash & stretch along the direction of travel — fast moves elongate
+    // the orb, like something with mass hurrying.
+    const speed = Math.hypot(this.ovx, this.ovy);
+    const moveAngle = Math.atan2(this.ovy, this.ovx);
+    const stretch = Math.min(0.14, speed / 260);
+
+    // Background: a bright silvery ground, as if the room itself is lit.
+    const bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, "#edeef3");
+    bg.addColorStop(1, "#dfdfe7");
+    ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
 
-    // --- the light behind: three halo layers, brightest at the rim ---
+    // --- the color field: several hues orbit the orb, mymind-style ---
+    // Each seed is a hue offset from the mood's base hue, parked at its own
+    // angle around the light source and drifting slowly. Together they give
+    // the light its range — pink here, amber there, lavender behind.
+    const glow = 0.5 + this.state.intensity * 0.5;
+    for (const seed of COLOR_SEEDS) {
+      const hue2 = (hue + seed.hueOff + 360) % 360;
+      const [sr, sg, sb] = hslToRGB(hue2, sat, light);
+      const drift = Math.sin(this.t * seed.speed + seed.phase) * 0.35;
+      const ang = seed.angle + drift;
+      const dist = this.r * seed.dist;
+      const sx = cx + Math.cos(ang) * dist;
+      const sy = cy + Math.sin(ang) * dist;
+      halo(
+        ctx,
+        sx, sy,
+        this.r * seed.size,
+        `rgba(${sr},${sg},${sb},${seed.alpha * glow})`
+      );
+    }
+
+    // --- the light behind: halo layers, brightest at the rim ---
 
     // Wide soft aura: the room's ambient cast.
-    halo(ctx, cx, cy, this.r * 7, `rgba(${ar},${ag},${ab},${0.16 * (0.5 + sat + this.state.intensity)})`);
+    halo(ctx, cx, cy, this.r * 7, `rgba(${ar},${ag},${ab},${0.2 * glow})`);
     // Mid halo.
-    halo(ctx, cx, cy, this.r * 2.6, `rgba(${ar},${ag},${ab},${0.22 + 0.1 * sat})`);
+    halo(ctx, cx, cy, this.r * 2.6, `rgba(${ar},${ag},${ab},${0.26 + 0.1 * sat})`);
     // Backlight: a hot disc hugging the orb — the light source itself.
     if (this.state.weather === "storm") {
       halo(ctx, cx, cy, this.r * 1.5, `rgba(${ar},${ag},${ab},${flicker(this.t) * 0.5})`);
     } else {
-      halo(ctx, cx, cy, this.r * 1.5, `rgba(${ar},${ag},${ab},0.44)`);
+      halo(ctx, cx, cy, this.r * 1.5, `rgba(${ar},${ag},${ab},0.5)`);
     }
-
-    // Dust motes, drawn behind the orb so they catch the light.
-    this.updateAndDrawMotes(ctx, w, h, ar, ag, ab);
 
     // Weather, kept quiet.
     if (s.weather === "rain" || s.weather === "storm") this.drawRain(ctx, w, h);
@@ -338,9 +452,16 @@ export class Room {
     if (s.weather === "storm") this.maybeFlash(ctx, w, h, ar, ag, ab);
 
     // --- the orb, white, translucent enough to show it's lit from behind ---
+    // Everything below draws through the squash-stretch transform.
 
     // Wobble amplitude follows spring speed — elasticity you can see.
     const wob = Math.min(0.09, Math.abs(this.vr) / 900) + Math.sin(this.t * 0.6) * 0.006;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(moveAngle);
+    ctx.scale(1 + stretch, 1 - stretch * 0.6);
+    ctx.translate(-cx, -cy);
 
     // Rim glow first: light bleeding out around the silhouette.
     ctx.save();
@@ -385,6 +506,8 @@ export class Room {
     ctx.fillStyle = spec;
     this.orbPath(ctx, cx, cy, this.r, wob);
     ctx.fill();
+
+    ctx.restore(); // squash-stretch
   }
 
   /** Orb sits centered above the conversation, in the gap left by CSS. */
@@ -420,56 +543,6 @@ export class Room {
     ctx.closePath();
   }
 
-  private spawn(): Mote {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    return {
-      x: Math.random() * w,
-      y: Math.random() * h,
-      vx: 0,
-      vy: 0,
-      size: 0.5 + Math.random() * 1.4,
-      alpha: 0.08 + Math.random() * 0.25,
-    };
-  }
-
-  private updateAndDrawMotes(
-    ctx: CanvasRenderingContext2D,
-    w: number,
-    h: number,
-    ar: number,
-    ag: number,
-    ab: number
-  ): void {
-    const s = this.state;
-    const speed = 0.15 + s.dustEnergy * 1.4;
-    const turbulence = s.drift === "gusts" ? 1.6 : s.drift === "breeze" ? 0.7 : 0.15;
-
-    for (const p of this.motes) {
-      const angle =
-        Math.sin(p.x * 0.002 + this.t * 0.3) * turbulence +
-        Math.cos(p.y * 0.0023 - this.t * 0.22) * turbulence;
-      p.vx = p.vx * 0.9 + Math.cos(angle) * speed;
-      p.vy = p.vy * 0.9 + Math.sin(angle) * speed - 0.03; // slow rise
-      p.x += p.vx;
-      p.y += p.vy;
-      if (p.x < -10) p.x = w + 10;
-      if (p.x > w + 10) p.x = -10;
-      if (p.y < -10) p.y = h + 10;
-      if (p.y > h + 10) p.y = -10;
-
-      // Motes brighten as they pass near the light.
-      const dx = p.x - w / 2;
-      const dy = p.y - this.orbCenterY(h);
-      const near = Math.max(0, 1 - Math.hypot(dx, dy) / (this.r * 3.5));
-
-      ctx.fillStyle = `rgba(${ar},${ag},${ab},${p.alpha * (0.5 + s.dustEnergy * 0.4) + near * 0.08})`;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
   private rainDrops: { x: number; y: number; len: number }[] = [];
   private snowFlakes: { x: number; y: number; s: number; drift: number }[] = [];
 
@@ -479,7 +552,7 @@ export class Room {
       this.rainDrops.push({ x: Math.random() * w, y: Math.random() * h, len: 10 + Math.random() * 16 });
     }
     if (this.rainDrops.length > count) this.rainDrops.length = count;
-    ctx.strokeStyle = "rgba(200, 210, 235, 0.16)";
+    ctx.strokeStyle = "rgba(90, 100, 135, 0.14)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (const d of this.rainDrops) {
@@ -500,7 +573,7 @@ export class Room {
       this.snowFlakes.push({ x: Math.random() * w, y: Math.random() * h, s: 0.8 + Math.random() * 1.8, drift: Math.random() * Math.PI * 2 });
     }
     if (this.snowFlakes.length > 70) this.snowFlakes.length = 70;
-    ctx.fillStyle = "rgba(235, 240, 250, 0.35)";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
     for (const f of this.snowFlakes) {
       f.y += 0.35 + f.s * 0.22;
       f.x += Math.sin(this.t * 0.8 + f.drift) * 0.4;
@@ -570,10 +643,6 @@ function transparent(color: string): string {
 /** Flicker factor for storm light: layered sines, 0.5..1.1, no strobe. */
 function flicker(t: number): number {
   return 0.62 + 0.14 * Math.sin(t * 6.7) * Math.sin(t * 2.3) + 0.1 * Math.sin(t * 11.1);
-}
-
-function auraRGB(c: RGB): RGB {
-  return c;
 }
 
 function lighten(c: RGB): RGB {
