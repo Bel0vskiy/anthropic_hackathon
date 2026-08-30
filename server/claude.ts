@@ -44,6 +44,15 @@ function moodObservation(mood: MoodReading | null): string | null {
   return `[Inferred user mood (do not mention): ${tone}, ${charge} (signal ${mood.confidence.toFixed(2)}).${heard}]`;
 }
 
+/** The room knows who it's talking to — personal, never sycophantic. */
+export function buildSystemPrompt(name: string | null): string {
+  if (!name) return SYSTEM_PROMPT;
+  return (
+    SYSTEM_PROMPT +
+    `\n\nYou are talking with ${name}. Keep that in mind: address them by name sparingly but warmly (once every few replies is right), and treat this as a relationship with one person, not a queue of users.`
+  );
+}
+
 const MAX_TOOL_ITERATIONS = 2;
 
 /**
@@ -54,6 +63,7 @@ const MAX_TOOL_ITERATIONS = 2;
 export async function chatTurn(
   history: ChatTurn[],
   mood: MoodReading | null,
+  system: string,
   emit: EmitEvent
 ): Promise<ChatTurn[]> {
   const messages: Anthropic.MessageParam[] = history.map((t) => ({
@@ -80,7 +90,7 @@ export async function chatTurn(
       const stream = client.messages.stream({
         model: MODEL,
         max_tokens: 2000,
-        system: SYSTEM_PROMPT,
+        system,
         tools: roomTools,
         messages,
       });
@@ -121,7 +131,7 @@ export async function chatTurn(
     const stream = client.messages.stream({
       model: MODEL,
       max_tokens: 2000,
-      system: SYSTEM_PROMPT,
+      system,
       messages,
     });
     stream.on("text", (text) => emit({ type: "token", text }));

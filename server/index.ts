@@ -1,6 +1,12 @@
 import "dotenv/config";
 import express from "express";
-import { chatTurn, tagTopic, type ChatTurn, type MoodReading } from "./claude.js";
+import {
+  chatTurn,
+  tagTopic,
+  buildSystemPrompt,
+  type ChatTurn,
+  type MoodReading,
+} from "./claude.js";
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -8,15 +14,18 @@ app.use(express.json({ limit: "256kb" }));
 // Per-session history kept in memory, keyed by client-generated session id.
 // A hackathon demo doesn't need persistence; a server restart resets the room.
 const sessions = new Map<string, ChatTurn[]>();
+// The name the room opened for, one per session. Set on first contact.
+const names = new Map<string, string>();
 
 interface ChatBody {
   sessionId?: string;
+  name?: string;
   message?: string;
   mood?: MoodReading | null;
 }
 
 app.post("/api/chat", (req, res) => {
-  const { sessionId = "default", message, mood = null } = req.body as ChatBody;
+  const { sessionId = "default", name, message, mood = null } = req.body as ChatBody;
   if (typeof message !== "string" || message.trim().length === 0) {
     res.status(400).json({ error: "message required" });
     return;
@@ -47,7 +56,14 @@ app.post("/api/chat", (req, res) => {
     )}`
   );
 
-  chatTurn(history, mood, emit).then((updated) => {
+  // The name is given once at the gate and echoed by every later turn; the
+  // first one heard for a session wins, so late arrivals can't hijack it.
+  if (typeof name === "string" && name.trim() && !names.has(sessionId)) {
+    names.set(sessionId, name.trim().slice(0, 40));
+  }
+  const displayName = names.get(sessionId) ?? null;
+
+  chatTurn(history, mood, buildSystemPrompt(displayName), emit).then((updated) => {
     sessions.set(sessionId, updated.slice(-40));
     res.end();
   });

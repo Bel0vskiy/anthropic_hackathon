@@ -8,6 +8,41 @@ const sessionId = crypto.randomUUID();
 // Whether the room speaks its replies out loud. Toggled in the status strip.
 let ttsOn = false; // flips on automatically after the first mic turn
 
+// --- the name ---------------------------------------------------------
+// The room can't be personal to a stranger. The gate asks once; afterwards
+// the name rides along with every turn so the room knows who it's with.
+
+let userName = "";
+
+const gate = document.getElementById("gate") as HTMLDivElement;
+const gateForm = document.getElementById("gate-form") as HTMLFormElement;
+const nameInput = document.getElementById("name-input") as HTMLInputElement;
+
+gateForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = nameInput.value.trim().replace(/\s+/g, " ").slice(0, 40);
+  if (!name) {
+    nameInput.focus();
+    return;
+  }
+  userName = name;
+  try {
+    localStorage.setItem("room:name", name);
+  } catch {
+    /* private mode — the room simply forgets faster */
+  }
+  gate.classList.add("open");
+  setTimeout(() => gate.remove(), 1100);
+
+  const input = document.getElementById("input") as HTMLInputElement;
+  input.disabled = false;
+  input.focus();
+
+  // The room notices you arrive.
+  room.pulse(1);
+  addSystemNote(`hello, ${name.toLowerCase()}. the room is lit for you.`);
+});
+
 // --- the room ---------------------------------------------------------
 
 const room = new Room(document.getElementById("room") as HTMLCanvasElement);
@@ -23,6 +58,7 @@ warmMood();
 // --- chat over SSE ----------------------------------------------------
 
 async function send(message: string, voiceMood: MoodReading | null = null): Promise<void> {
+  room.pulse(0.5);
   addUserMessage(message);
 
   // Fire-and-forget topic tag; merges into the palette when it lands.
@@ -49,12 +85,13 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
 
   const append = startAssistantMessage();
   let spoken = "";
+  let firstToken = true;
 
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, message, mood }),
+      body: JSON.stringify({ sessionId, name: userName, message, mood }),
     });
     if (!res.ok || !res.body) {
       throw new Error(`chat request failed (${res.status})`);
@@ -62,6 +99,11 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
     await consumeSSE(res.body, (event) => {
       if (event.type === "token") {
         spoken += event.text as string;
+        // A small elastic tick when the room starts to speak.
+        if (firstToken) {
+          firstToken = false;
+          room.pulse(0.35);
+        }
         append(event.text as string);
       } else if (event.type === "room") {
         const { type: _t, tool: _tool, ...roomState } = event;
@@ -149,6 +191,11 @@ voiceToggle.addEventListener("click", () => {
 let recording: SpeechCapture | null = null;
 
 micBtn.addEventListener("click", async () => {
+  if (!userName) {
+    addSystemNote("the door opens after a name");
+    nameInput.focus();
+    return;
+  }
   if (recording) {
     micBtn.textContent = "…";
     micBtn.classList.remove("live");
