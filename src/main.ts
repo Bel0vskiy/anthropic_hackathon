@@ -382,8 +382,8 @@ function revealWithVoice(
 
 /**
  * Blend the voice reading with the text reading, weighted by confidence.
- * When the two channels disagree — "I'm fine" said flatly — mark it, instead
- * of letting the average wash the truth out of both.
+ * When the two channels disagree widely — "I'm fine" said flatly — the room
+ * stops averaging and believes the voice: the words are the mask there.
  */
 function mergeMoods(
   voice: MoodReading | null,
@@ -391,23 +391,36 @@ function mergeMoods(
 ): MoodReading | null {
   if (!voice) return text;
   if (!text) return voice;
+
   // The text classifier reads ~0.99 certainty on any clear sentence, so raw
-  // confidence weighting lets the words drown the voice. Tone is the channel
-  // you can't fake — when the mic speaks, it gets the bigger vote.
+  // confidence weighting lets the words drown the voice. Tone gets the
+  // bigger vote: it's the channel you can't fake.
   const wv = voice.confidence * 1.6 + text.confidence || 1;
-  // Divergence only counts when both readings are sure enough, and the gap
-  // between them is wide — a flat voice under positive words, or the reverse.
-  const sure = text.confidence > 0.8 && voice.confidence > 0.5;
-  const wordsBetter = sure && text.valence > 0.3 && text.valence - voice.valence > 0.45;
-  const voiceBetter = sure && text.valence < -0.3 && voice.valence - text.valence > 0.45;
-  return {
+  const blended = {
     valence: (voice.valence * (voice.confidence * 1.6) + text.valence * text.confidence) / wv,
     energy: (voice.energy * (voice.confidence * 1.6) + text.energy * text.confidence) / wv,
     // Tone wins ties for the label: it's the channel you can't fake.
     label: voice.confidence >= text.confidence ? voice.label : text.label,
     confidence: Math.max(voice.confidence, text.confidence),
+  };
+
+  // Divergence: a wide gap between words and voice, with the tone sure
+  // enough to mean it. (Sidecar confidence floors at 0.35 for flat speech —
+  // that's "neutral, no signal", so it can't trigger a divergence alone.)
+  const gap = text.valence - voice.valence;
+  const divergent =
+    voice.confidence > 0.3 ? (gap > 0.5 ? "words" : gap < -0.5 ? "voice" : null) : null;
+  if (!divergent) {
+    return { ...blended, fromVoice: true, divergent: null };
+  }
+  // The reading follows the tone, with the words as a mild counterweight.
+  return {
+    valence: voice.valence * 0.7 + text.valence * 0.3,
+    energy: voice.energy * 0.7 + text.energy * 0.3,
+    label: voice.label,
+    confidence: blended.confidence,
     fromVoice: true,
-    divergent: wordsBetter ? "words" : voiceBetter ? "voice" : null,
+    divergent,
   };
 }
 
