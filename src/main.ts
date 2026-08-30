@@ -419,9 +419,9 @@ function revealWithVoice(
 }
 
 /**
- * Blend the voice reading with the text reading, weighted by confidence.
+ * Blend the voice reading with the text reading — tone 90%, words 10%.
  * When the two channels disagree widely — "I'm fine" said flatly — the room
- * stops averaging and believes the voice: the words are the mask there.
+ * already leans voice, so divergence only sharpens the label.
  */
 function mergeMoods(
   voice: MoodReading | null,
@@ -430,15 +430,12 @@ function mergeMoods(
   if (!voice) return text;
   if (!text) return voice;
 
-  // The text classifier reads ~0.99 certainty on any clear sentence, so raw
-  // confidence weighting lets the words drown the voice. Tone gets the
-  // bigger vote: it's the channel you can't fake.
-  const wv = voice.confidence * 1.6 + text.confidence || 1;
+  // Tone gets the room: 90% of the blend. The words are a faint counterweight
+  // — the channel you can read is also the one you can fake.
   const blended = {
-    valence: (voice.valence * (voice.confidence * 1.6) + text.valence * text.confidence) / wv,
-    energy: (voice.energy * (voice.confidence * 1.6) + text.energy * text.confidence) / wv,
-    // Tone wins ties for the label: it's the channel you can't fake.
-    label: voice.confidence >= text.confidence ? voice.label : text.label,
+    valence: voice.valence * 0.9 + text.valence * 0.1,
+    energy: voice.energy * 0.9 + text.energy * 0.1,
+    label: voice.label,
     confidence: Math.max(voice.confidence, text.confidence),
   };
 
@@ -457,10 +454,10 @@ function mergeMoods(
   if (!divergent) {
     return { ...blended, fromVoice: true, divergent: null };
   }
-  // The reading follows the tone, with the words as a mild counterweight.
+  // The reading follows the tone; the words barely bend it.
   return {
-    valence: voice.valence * 0.7 + text.valence * 0.3,
-    energy: voice.energy * 0.7 + text.energy * 0.3,
+    valence: voice.valence * 0.9 + text.valence * 0.1,
+    energy: voice.energy * 0.9 + text.energy * 0.1,
     label: voice.label,
     confidence: blended.confidence,
     fromVoice: true,
