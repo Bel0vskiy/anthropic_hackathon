@@ -498,6 +498,9 @@ voiceToggle.addEventListener("click", () => {
 });
 
 let recording: SpeechCapture | null = null;
+// A stop is already draining — presses during it must not re-enter, or the
+// button wedges on "…" for a turn that already ended.
+let stoppingCapture = false;
 // The last transcript actually sent — an empty stop sometimes replays the
 // recognition engine's stale result, and the room shouldn't hear it twice.
 let lastSent = "";
@@ -512,6 +515,46 @@ function pollMicLevel(): void {
   requestAnimationFrame(pollMicLevel);
 }
 
+/** Finish a voice turn and send what was said. The one path out of a
+ *  recording — same for "press the mic again" and "press send" — so the
+ *  capture can never hang open under either control. */
+async function stopRecordingAndSend(): Promise<void> {
+  const cap = recording;
+  if (!cap || stoppingCapture) return;
+  stoppingCapture = true;
+  micBtn.textContent = "…";
+  micBtn.classList.remove("live");
+  const { transcript, mood } = await cap.stop();
+  stoppingCapture = false;
+  recording = null;
+  room.setMicLevel(0, false);
+  micBtn.textContent = "◉";
+  input.placeholder = "message…";
+
+  // Words from the STT flush, or — if you stopped with a press instead of a
+  // voice — whatever you had typed while the room was listening.
+  const said = transcript.trim() || input.value.trim();
+  if (!said) {
+    input.value = "";
+    addSystemNote("I didn't catch that — hold the mic a little longer");
+    return;
+  }
+  if (said === lastSent) {
+    // A silent stop replayed the previous turn — don't send it again.
+    addSystemNote("the room already heard those words — it won't ask twice");
+    return;
+  }
+  lastSent = said;
+  ttsOn = true; // you spoke first — the room answers out loud
+  renderVoiceToggle();
+  input.value = "";
+  const read = mood?.fromVoice
+    ? ""
+    : `the room heard your words but not your tone — ${moodTrace()}`;
+  void send(said, mood);
+  if (read) addSystemNote(read);
+}
+
 micBtn.addEventListener("click", async () => {
   if (!userName) {
     addSystemNote("the door opens after a name");
@@ -519,35 +562,10 @@ micBtn.addEventListener("click", async () => {
     return;
   }
   if (recording) {
-    micBtn.textContent = "…";
-    micBtn.classList.remove("live");
-    const { transcript, mood } = await recording.stop();
-    recording = null;
-    room.setMicLevel(0, false);
-    micBtn.textContent = "◉";
-    input.placeholder = "message…";
-    if (transcript.trim()) {
-      const said = transcript.trim();
-      if (said === lastSent) {
-        // A silent stop replayed the previous turn — don't send it again.
-        addSystemNote("the room already heard those words — it won't ask twice");
-      } else {
-        lastSent = said;
-        ttsOn = true; // you spoke first — the room answers out loud
-        renderVoiceToggle();
-        input.value = "";
-        const read = mood?.fromVoice
-          ? ""
-          : `the room heard your words but not your tone — ${moodTrace()}`;
-        void send(said, mood);
-        if (read) addSystemNote(read);
-      }
-    } else {
-      input.value = "";
-      addSystemNote("I didn't catch that — hold the mic a little longer");
-    }
+    await stopRecordingAndSend();
     return;
   }
+  if (stoppingCapture) return; // a stop is still draining — one beat
   try {
     input.value = "";
     input.placeholder = "listening… (click again to stop)";
@@ -566,6 +584,12 @@ micBtn.addEventListener("click", async () => {
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
+  // Recording: a submit means "stop and send what you said" — never a
+  // silently emptied message with the mic left hanging open.
+  if (recording) {
+    void stopRecordingAndSend();
+    return;
+  }
   // Mid-reply, a submit means stop — not queue another message on top.
   if (streaming) {
     void stopReply();

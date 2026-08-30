@@ -37,7 +37,12 @@ export interface SpeechCapture {
 export function startCapture(onInterim: (text: string) => void): SpeechCapture {
   let recorder: MediaRecorder | null = null;
   let chunks: Blob[] = [];
+  let stream: MediaStream | null = null;
   let stopped = false;
+  // A turn stops exactly once: a second press while the first stop is still
+  // draining re-entered the promise race and wedged the button. Later calls
+  // share the first call's result.
+  let stopPromise: Promise<{ transcript: string; mood: MoodReading | null }> | null = null;
 
   // The orb listens here: an analyser on the live stream turns your voice
   // into a single number the room can lean with.
@@ -53,7 +58,7 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
   // forever, and turns went out with words but no tone.
   const micReady = (async () => {
     lastTrace = "asking for mic…";
-    const stream = await Promise.race([
+    stream = await Promise.race([
       navigator.mediaDevices.getUserMedia({ audio: true }),
       new Promise<never>((_, rej) =>
         setTimeout(
@@ -67,7 +72,7 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data);
     };
-    window.addEventListener("beforeunload", () => stream.getTracks().forEach((t) => t.stop()));
+    window.addEventListener("beforeunload", () => stream?.getTracks().forEach((t) => t.stop()));
     recorder.start();
 
     const ctx = sharedCtx();
@@ -91,38 +96,49 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
 
   return {
     async stop(): Promise<{ transcript: string; mood: MoodReading | null }> {
-      const blob = await new Promise<Blob | null>((resolve) => {
-        const t0 = Date.now();
-        const tryStop = () => {
-          if (recorder && !stopped) {
-            stopped = true;
-            recorder.onstop = () => resolve(new Blob(chunks));
-            recorder.stop();
-            return;
-          }
-          // The recorder may still be opening — wait briefly, then give up.
-          if (!micError && Date.now() - t0 < 3000) {
-            setTimeout(tryStop, 100);
-            return;
-          }
-          lastTrace = micError
-            ? `mic failed: ${micError}`
-            : "no recording captured (mic never opened)";
-          resolve(null);
-        };
-        tryStop();
-      });
+      // One turn, one stop: a press while stop() is draining shares its
+      // result instead of racing it on the same recorder.
+      stopPromise ??= (async (): Promise<{ transcript: string; mood: MoodReading | null }> => {
+        const blob = await new Promise<Blob | null>((resolve) => {
+          const t0 = Date.now();
+          const tryStop = () => {
+            if (recorder && !stopped) {
+              stopped = true;
+              recorder.onstop = () => resolve(new Blob(chunks));
+              recorder.stop();
+              return;
+            }
+            // The recorder may still be opening — wait briefly, then give up.
+            if (!micError && Date.now() - t0 < 3000) {
+              setTimeout(tryStop, 100);
+              return;
+            }
+            lastTrace = micError
+              ? `mic failed: ${micError}`
+              : "no recording captured (mic never opened)";
+            resolve(null);
+          };
+          tryStop();
+        });
 
-      const [transcript, mood] = await Promise.all([
-        finalTranscript(stt),
-        blob ? audioBlobToMood(blob).catch((err: any) => {
-          console.error("[voice] emotion failed:", err);
-          lastTrace += " | crashed: " + (err?.message ?? err);
-          return null;
-        }) : Promise.resolve(null),
-      ]);
-      analyser = null; // the context is shared — only the node is let go
-      return { transcript, mood };
+        // The mic itself goes back. Tracks survived the turn before, so the
+        // tab kept its recording badge and the next turn opened a second
+        // stream on top of it.
+        stream?.getTracks().forEach((t) => t.stop());
+        stream = null;
+
+        const [transcript, mood] = await Promise.all([
+          finalTranscript(stt),
+          blob ? audioBlobToMood(blob).catch((err: any) => {
+            console.error("[voice] emotion failed:", err);
+            lastTrace += " | crashed: " + (err?.message ?? err);
+            return null;
+          }) : Promise.resolve(null),
+        ]);
+        analyser = null; // the context is shared — only the node is let go
+        return { transcript, mood };
+      })();
+      return stopPromise;
     },
 
     level(): number {
