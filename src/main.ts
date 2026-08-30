@@ -419,7 +419,7 @@ function revealWithVoice(
 }
 
 /**
- * Blend the voice reading with the text reading — tone 97%, words 3%.
+ * Blend the voice reading with the text reading — tone 90%, words 10%.
  * When the two channels disagree widely — "I'm fine" said flatly — the room
  * already leans voice, so divergence only sharpens the label.
  */
@@ -430,11 +430,11 @@ function mergeMoods(
   if (!voice) return text;
   if (!text) return voice;
 
-  // Tone gets the room: 97% of the blend. The words are a barely-there
-  // counterweight — the channel you can read is also the one you can fake.
+  // Tone gets the room: 90% of the blend. The words are a faint counterweight
+  // — the channel you can read is also the one you can fake.
   const blended = {
-    valence: voice.valence * 0.97 + text.valence * 0.03,
-    energy: voice.energy * 0.97 + text.energy * 0.03,
+    valence: voice.valence * 0.9 + text.valence * 0.1,
+    energy: voice.energy * 0.9 + text.energy * 0.1,
     label: voice.label,
     confidence: Math.max(voice.confidence, text.confidence),
   };
@@ -454,10 +454,10 @@ function mergeMoods(
   if (!divergent) {
     return { ...blended, fromVoice: true, divergent: null };
   }
-  // The reading follows the tone; the words only bend it a shade.
+  // The reading follows the tone; the words barely bend it.
   return {
-    valence: voice.valence * 0.97 + text.valence * 0.03,
-    energy: voice.energy * 0.97 + text.energy * 0.03,
+    valence: voice.valence * 0.9 + text.valence * 0.1,
+    energy: voice.energy * 0.9 + text.energy * 0.1,
     label: voice.label,
     confidence: blended.confidence,
     fromVoice: true,
