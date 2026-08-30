@@ -110,10 +110,13 @@ async function audioBlobToMood(blob: Blob): Promise<MoodReading | null> {
 
 /** Decoded float32 PCM -> sidecar. */
 async function pcmToMood(pcm: Float32Array): Promise<MoodReading | null> {
+  // A byte view of the same samples: fresh buffer sidesteps ArrayBufferLike.
+  const bytes = new Uint8Array(pcm.length * 4);
+  new Float32Array(bytes.buffer).set(pcm);
   const res = await fetch(`/api/voice-emotion?sample_rate=${TARGET_RATE}`, {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
-    body: new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength),
+    body: bytes,
   });
   if (!res.ok) {
     console.error("[voice] emotion proxy failed:", res.status);
