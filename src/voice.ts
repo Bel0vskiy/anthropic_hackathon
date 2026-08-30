@@ -88,16 +88,28 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
   });
 }
 
-/** Raw PCM bytes -> node proxy -> sidecar -> MoodReading. */
+/** Recording -> MoodReading. Decode in the browser when it can; if it can't,
+ * ship the recording itself to the server, where ffmpeg decodes it. */
 async function audioBlobToMood(blob: Blob): Promise<MoodReading | null> {
-  const arr = await blob.arrayBuffer();
-  const ctx = new AudioContext();
-  const decoded = await ctx.decodeAudioData(arr);
-  void ctx.close();
+  console.log("[voice] clip:", blob.type || "unknown container", blob.size, "bytes");
+  try {
+    const arr = await blob.arrayBuffer();
+    const ctx = new AudioContext();
+    const decoded = await ctx.decodeAudioData(arr);
+    void ctx.close();
 
-  const rendered = await resampleMono(decoded, TARGET_RATE);
-  const pcm = rendered.getChannelData(0).slice(0, TARGET_RATE * 20);
+    const rendered = await resampleMono(decoded, TARGET_RATE);
+    const pcm = rendered.getChannelData(0).slice(0, TARGET_RATE * 20);
+    const mood = await pcmToMood(pcm);
+    if (mood) return mood;
+  } catch (err: any) {
+    console.warn("[voice] local decode failed, trying the server:", err?.message ?? err);
+  }
+  return blobToMood(blob);
+}
 
+/** Decoded float32 PCM -> sidecar. */
+async function pcmToMood(pcm: Float32Array): Promise<MoodReading | null> {
   const res = await fetch(`/api/voice-emotion?sample_rate=${TARGET_RATE}`, {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
@@ -107,7 +119,30 @@ async function audioBlobToMood(blob: Blob): Promise<MoodReading | null> {
     console.error("[voice] emotion proxy failed:", res.status);
     return null;
   }
-  const { mood } = (await res.json()) as { mood: MoodReading | null };
+  return unwrapMood(await res.json());
+}
+
+/** The recording itself -> server-side ffmpeg -> sidecar. */
+async function blobToMood(blob: Blob): Promise<MoodReading | null> {
+  try {
+    const res = await fetch(`/api/voice-emotion-file?sample_rate=${TARGET_RATE}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: blob,
+    });
+    if (!res.ok) {
+      console.error("[voice] emotion (file) proxy failed:", res.status);
+      return null;
+    }
+    return unwrapMood(await res.json());
+  } catch (err: any) {
+    console.error("[voice] emotion (file) unreachable:", err?.message ?? err);
+    return null;
+  }
+}
+
+function unwrapMood(payload: { mood: MoodReading | null }): MoodReading | null {
+  const { mood } = payload;
   if (mood) {
     mood.fromVoice = true;
     console.log(

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { spawn } from "node:child_process";
 import express from "express";
 import {
   chatTurn,
@@ -196,6 +197,54 @@ app.post(
       res.status(upstream.status).json(payload);
     } catch (err: any) {
       console.error("[voice] sidecar unreachable:", err?.message ?? err);
+      res.json({ mood: null });
+    }
+  }
+);
+
+/** ffmpeg-decode any MediaRecorder container (webm/opus, mp4/aac…) to mono
+ *  16 kHz float32 — the browser path's fallback when decodeAudioData fails. */
+function ffmpegTo16kF32(input: Buffer): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const ff = spawn("ffmpeg", [
+      "-loglevel", "error",
+      "-i", "pipe:0",
+      "-f", "f32le", "-ac", "1", "-ar", "16000",
+      "pipe:1",
+    ]);
+    const out: Buffer[] = [];
+    ff.stdout.on("data", (c: Buffer) => out.push(c));
+    ff.on("error", () => resolve(null));
+    ff.on("close", (code) => resolve(code === 0 ? Buffer.concat(out) : null));
+    ff.stdin.end(input);
+  });
+}
+
+// Same contract as /api/voice-emotion, but the body is the recording itself.
+app.post(
+  "/api/voice-emotion-file",
+  express.raw({ type: "*/*", limit: "16mb" }),
+  async (req, res) => {
+    try {
+      const input = req.body as Buffer;
+      const pcm = await ffmpegTo16kF32(input);
+      if (!pcm || pcm.length < 4) {
+        console.warn(`[voice] ffmpeg decoded nothing from ${input.length} bytes`);
+        res.json({ mood: null });
+        return;
+      }
+      const upstream = await fetch(`${VOICE_URL}/emotion?sample_rate=16000`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: new Uint8Array(pcm),
+      });
+      const payload = await upstream.json();
+      console.log(
+        `[voice] file ${input.length} bytes -> ${pcm.length / 4} samples -> ${JSON.stringify(payload).slice(0, 120)}`
+      );
+      res.status(upstream.status).json(payload);
+    } catch (err: any) {
+      console.error("[voice] file proxy failed:", err?.message ?? err);
       res.json({ mood: null });
     }
   }

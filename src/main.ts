@@ -459,7 +459,9 @@ micBtn.addEventListener("click", async () => {
       ttsOn = true; // you spoke first — the room answers out loud
       renderVoiceToggle();
       input.value = "";
+      const read = mood?.fromVoice ? null : "the room heard your words but not your tone (see console)";
       void send(transcript.trim(), mood);
+      if (read) addSystemNote(read);
     } else {
       addSystemNote("I didn't catch that — hold the mic a little longer");
     }
