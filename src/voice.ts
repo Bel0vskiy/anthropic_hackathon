@@ -103,9 +103,20 @@ async function audioBlobToMood(blob: Blob): Promise<MoodReading | null> {
     headers: { "Content-Type": "application/octet-stream" },
     body: new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength),
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    console.error("[voice] emotion proxy failed:", res.status);
+    return null;
+  }
   const { mood } = (await res.json()) as { mood: MoodReading | null };
-  if (mood) mood.fromVoice = true;
+  if (mood) {
+    mood.fromVoice = true;
+    console.log(
+      "[voice] prosody read:", mood.label,
+      `valence ${mood.valence}, energy ${mood.energy}, conf ${mood.confidence}`
+    );
+  } else {
+    console.warn("[voice] prosody: sidecar read nothing from that clip");
+  }
   return mood;
 }
 

@@ -185,12 +185,15 @@ app.post(
   async (req, res) => {
     try {
       const sampleRate = req.query.sample_rate ?? "16000";
+      const bytes = (req.body as Buffer).length;
       const upstream = await fetch(`${VOICE_URL}/emotion?sample_rate=${sampleRate}`, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },
         body: new Uint8Array(req.body as Buffer),
       });
-      res.status(upstream.status).json(await upstream.json());
+      const payload = await upstream.json();
+      console.log(`[voice] ${bytes} bytes -> ${upstream.status} ${JSON.stringify(payload).slice(0, 120)}`);
+      res.status(upstream.status).json(payload);
     } catch (err: any) {
       console.error("[voice] sidecar unreachable:", err?.message ?? err);
       res.json({ mood: null });

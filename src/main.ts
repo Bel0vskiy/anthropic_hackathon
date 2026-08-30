@@ -245,6 +245,11 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
   // Mood first: text classifier, merged with the voice reading if one
   // arrived. It drives both the request payload and the visuals.
   let mood = await readMood(message);
+  if (voiceMood) {
+    console.log("[mood] voice channel present:", voiceMood.label, voiceMood.confidence);
+  } else {
+    console.warn("[mood] no voice reading arrived — text only");
+  }
   mood = mergeMoods(voiceMood, mood);
   room.setMood(mood);
   updateStatus(mood?.label ?? null);
