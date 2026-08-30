@@ -292,107 +292,44 @@ body {
   transform: scale(1.18);
 }
 
-/* ---- quirks: hearts and other outbursts, above everything ---- */
-
-#quirks {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 5;
-  overflow: hidden;
+#gate-voice-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  padding-top: 10px;
 }
 
-.heart-emote {
-  position: absolute;
-  transform: translate(-50%, 0);
-  animation: heart-rise 2.4s ease-out both;
-  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.6));
-}
-
-@keyframes heart-rise {
-  0% {
-    opacity: 0;
-    margin-top: 0;
-    scale: 0.5;
-  }
-  18% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    margin-top: calc(-1 * var(--rise, 90px));
-    scale: 1.15;
-  }
-}
-
-.dog-quirk {
-  position: absolute;
-  transform: translate(-50%, 0);
+#voice-row {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  animation: dog-pop 4.6s ease-in-out both;
+  gap: 10px;
+  justify-content: center;
+  padding: 4px 0 2px;
 }
 
-.dog-quirk-pic {
-  font-size: 64px;
-  position: relative;
-  filter: drop-shadow(0 4px 18px rgba(24, 27, 38, 0.25));
-  animation: dog-shake 0.5s ease-in-out 3;
-}
-
-.dog-quirk-rage {
-  position: absolute;
-  top: -6px;
-  right: -22px;
-  font-size: 26px;
-}
-
-.dog-quirk-line {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--ink-dim);
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid var(--line);
+.voice-btn {
+  background: transparent;
+  border: 1px solid rgba(24, 27, 38, 0.22);
   border-radius: 999px;
-  padding: 8px 16px;
-  max-width: 320px;
-  backdrop-filter: blur(4px);
+  padding: 7px 18px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: border-color 0.3s ease, color 0.3s ease, transform 0.25s ease, box-shadow 0.3s ease;
 }
 
-@keyframes dog-pop {
-  0% {
-    opacity: 0;
-    scale: 0.6;
-  }
-  10% {
-    opacity: 1;
-    scale: 1.05;
-  }
-  16% {
-    scale: 1;
-  }
-  84% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    margin-top: -14px;
-  }
+.voice-btn:hover {
+  transform: scale(1.06);
+  border-color: rgba(24, 27, 38, 0.45);
 }
 
-@keyframes dog-shake {
-  0%,
-  100% {
-    rotate: 0deg;
-  }
-  25% {
-    rotate: -7deg;
-  }
-  75% {
-    rotate: 7deg;
-  }
+.voice-btn.picked {
+  border-color: var(--ink);
+  color: var(--ink);
+  box-shadow: 0 0 10px rgba(24, 27, 38, 0.14);
+  transform: scale(1.06);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -400,3 +337,5 @@ body {
     animation: none;
   }
 }
+
+/* ---- quirks: retired — the room speaks with light, not emojis ---- */

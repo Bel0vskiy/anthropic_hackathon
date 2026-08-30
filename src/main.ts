@@ -1,8 +1,7 @@
 import { Room } from "./room";
 import { warmMood, readMood, type MoodReading } from "./mood";
 import { addUserMessage, startAssistantMessage, addSystemNote, updateStatus } from "./chat";
-import { startCapture, speak, stopSpeaking, type SpeechCapture } from "./voice";
-import { orbQuirks } from "./quirks";
+import { startCapture, speak, speakEleven, stopSpeaking, type SpeechCapture } from "./voice";
 
 const sessionId = crypto.randomUUID();
 
@@ -64,6 +63,56 @@ try {
 } catch {
   /* localStorage unavailable — fresh visit */ }
 
+// --- the voice row: the person the room answers in -----------------------
+// Names come from the server, so renaming a voice in .env renames the
+// button. Picking one speaks a short line in it — you choose by hearing.
+
+let chosenVoice = "uk";
+try {
+  const savedVoice = localStorage.getItem("room:voice");
+  if (savedVoice) chosenVoice = savedVoice;
+} catch {
+  /* fresh visit */ }
+
+const voiceRow = document.getElementById("voice-row") as HTMLDivElement;
+let voiceNames: Record<string, string> = { uk: "him", us: "her" };
+let previewing = false;
+
+function pickVoice(key: string): void {
+  for (const el of voiceRow.children) {
+    el.classList.toggle("picked", (el as HTMLElement).dataset.voice === key);
+  }
+}
+
+fetch("/api/voices")
+  .then((r) => r.json())
+  .then(({ voices }: { voices: { key: string; name: string }[] }) => {
+    voiceNames = { ...voiceNames, ...Object.fromEntries(voices.map((v) => [v.key, v.name])) };
+    for (const [key, name] of Object.entries(voiceNames)) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "voice-btn";
+      b.dataset.voice = key;
+      b.textContent = name;
+      b.addEventListener("click", () => {
+        chosenVoice = key;
+        pickVoice(key);
+        // A whisper of the voice itself — a few characters of credit.
+        if (!previewing) {
+          previewing = true;
+          void speakEleven("well, hello there.", key, null)
+            .catch(() => void 0)
+            .finally(() => setTimeout(() => (previewing = false), 400));
+        }
+      });
+      voiceRow.appendChild(b);
+    }
+    pickVoice(chosenVoice);
+  })
+  .catch(() => {
+    /* no voice service — the gate simply doesn't offer a choice */
+  });
+
 gateForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = nameInput.value.trim().replace(/\s+/g, " ").slice(0, 40);
@@ -76,6 +125,7 @@ gateForm.addEventListener("submit", (e) => {
   try {
     localStorage.setItem("room:name", name);
     localStorage.setItem("room:hue", String(userHue));
+    localStorage.setItem("room:voice", chosenVoice);
   } catch {
     /* private mode — the room simply forgets faster */
   }
@@ -132,9 +182,6 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
   room.setMood(mood);
   updateStatus(mood?.label ?? null);
 
-  // Personality quirks — hearts for affection, the angry dog for anger.
-  orbQuirks(message, mood, () => room.orbPos(), () => room.pulse(1.2));
-
   const append = startAssistantMessage();
   let spoken = "";
   let firstToken = true;
@@ -169,8 +216,14 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
     addSystemNote("connection failed — try again");
   }
 
-  // The room speaks — only after a conversation that started with voice.
-  if (ttsOn && spoken) speak(spoken, room.voiceParams());
+  // The room speaks — in the voice chosen at the gate, with the mood of the
+  // moment bent into it. If elevenlabs is quiet, browser speech answers.
+  if (ttsOn && spoken) {
+    speakEleven(spoken, chosenVoice, mood).catch((err) => {
+      console.error("[voice] elevenlabs unavailable:", err.message);
+      speak(spoken, room.voiceParams());
+    });
+  }
 
   const input = document.getElementById("input") as HTMLInputElement;
   input.disabled = false;

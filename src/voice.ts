@@ -154,6 +154,41 @@ async function finalTranscript(
 }
 
 // ---- TTS -------------------------------------------------------------------
+// The real voice comes from elevenlabs, proxied through /api/tts with the
+// mood folded in server-side; the tone of the audio bends to how the room
+// feels. When that fails — no key, dead network — browser speech answers so
+// the room is never mute.
+
+let currentAudio: HTMLAudioElement | null = null;
+let currentUrl: string | null = null;
+
+/** ElevenLabs playback. Throws if the room's real voice is unavailable. */
+export async function speakEleven(
+  text: string,
+  voice: string,
+  mood: MoodReading | null
+): Promise<void> {
+  const res = await fetch("/api/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice, mood }),
+  });
+  if (!res.ok) throw new Error(`tts failed (${res.status})`);
+
+  stopSpeaking();
+  const url = URL.createObjectURL(await res.blob());
+  const audio = new Audio(url);
+  currentAudio = audio;
+  currentUrl = url;
+  audio.onended = () => {
+    if (currentUrl === url) URL.revokeObjectURL(url);
+    if (currentAudio === audio) {
+      currentAudio = null;
+      currentUrl = null;
+    }
+  };
+  await audio.play();
+}
 
 export function speak(text: string, params: { rate: number; pitch: number }): void {
   if (!("speechSynthesis" in window)) return;
@@ -166,5 +201,10 @@ export function speak(text: string, params: { rate: number; pitch: number }): vo
 }
 
 export function stopSpeaking(): void {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+    currentUrl = null;
+  }
   window.speechSynthesis?.cancel();
 }

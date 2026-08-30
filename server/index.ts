@@ -7,6 +7,7 @@ import {
   type ChatTurn,
   type MoodReading,
 } from "./claude.js";
+import { VOICES, hasVoiceKey, synthesize } from "./eleven.js";
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -79,6 +80,50 @@ app.post("/api/topic", async (req, res) => {
   res.json({ topic });
 });
 
+// The voices the gate offers, by name. Kept here so the client never sees
+// ids or keys; renaming a voice in .env renames the button.
+app.get("/api/voices", (_req, res) => {
+  res.json({
+    voices: Object.entries(VOICES).map(([key, v]) => ({ key, name: v.name })),
+  });
+});
+
+// Text -> mood-bent ElevenLabs audio. Binary passthrough; failures fall back
+// to browser speech on the client, so a dead key is silent, not broken.
+app.post("/api/tts", async (req, res) => {
+  const { text, voice, mood = null } = req.body as {
+    text?: string;
+    voice?: string;
+    mood?: MoodReading | null;
+  };
+  if (typeof text !== "string" || text.trim().length === 0) {
+    res.status(400).json({ error: "text required" });
+    return;
+  }
+  if (!hasVoiceKey()) {
+    res.status(503).json({ error: "no voice key" });
+    return;
+  }
+  try {
+    const upstream = await synthesize(text, voice ?? "uk", mood);
+    if (!upstream.ok || !upstream.body) {
+      console.error(
+        `[tts] elevenlabs ${upstream.status}:`,
+        (await upstream.text().catch(() => "")).slice(0, 300)
+      );
+      res.status(502).json({ error: "tts failed" });
+      return;
+    }
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.send(buf);
+  } catch (err: any) {
+    console.error("[tts] unreachable:", err?.message ?? err);
+    res.status(502).json({ error: "tts failed" });
+  }
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -110,4 +155,13 @@ app.post(
 const PORT = process.env.PORT ?? 8787;
 app.listen(PORT, () => {
   console.log(`[room] listening on http://localhost:${PORT}`);
+  if (hasVoiceKey()) {
+    console.log(
+      `[tts] elevenlabs on — ${Object.values(VOICES)
+        .map((v) => v.name)
+        .join(", ")}`
+    );
+  } else {
+    console.log("[tts] no ELEVENLABS_API_KEY — replies will use browser speech");
+  }
 });
