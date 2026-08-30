@@ -9,6 +9,13 @@ import type { MoodReading } from "./mood";
 
 const TARGET_RATE = 16000;
 
+/** Breadcrumbs from the last voice-mood attempt — the room can show this
+ *  directly, so a failure is visible without opening devtools. */
+let lastTrace = "no attempt";
+export function moodTrace(): string {
+  return lastTrace;
+}
+
 export interface SpeechCapture {
   stop(): Promise<{ transcript: string; mood: MoodReading | null }>;
   /** Live mic loudness, 0..1 — for the orb leaning in. */
@@ -35,7 +42,10 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
   return {
     async stop(): Promise<{ transcript: string; mood: MoodReading | null }> {
       const blob = await new Promise<Blob | null>((resolve) => {
-        if (!recorder || stopped) return resolve(null);
+        if (!recorder || stopped) {
+          lastTrace = "no recording captured (mic not ready?)";
+          return resolve(null);
+        }
         stopped = true;
         recorder.onstop = () => resolve(new Blob(chunks));
         recorder.stop();
@@ -43,8 +53,9 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
 
       const [transcript, mood] = await Promise.all([
         finalTranscript(stt),
-        blob ? audioBlobToMood(blob).catch((err) => {
+        blob ? audioBlobToMood(blob).catch((err: any) => {
           console.error("[voice] emotion failed:", err);
+          lastTrace += " | crashed: " + (err?.message ?? err);
           return null;
         }) : Promise.resolve(null),
       ]);
@@ -92,6 +103,7 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
  * ship the recording itself to the server, where ffmpeg decodes it. */
 async function audioBlobToMood(blob: Blob): Promise<MoodReading | null> {
   console.log("[voice] clip:", blob.type || "unknown container", blob.size, "bytes");
+  lastTrace = `clip ${blob.size}B ${blob.type || "?"}`;
   try {
     const arr = await blob.arrayBuffer();
     const ctx = new AudioContext();
@@ -104,6 +116,7 @@ async function audioBlobToMood(blob: Blob): Promise<MoodReading | null> {
     if (mood) return mood;
   } catch (err: any) {
     console.warn("[voice] local decode failed, trying the server:", err?.message ?? err);
+    lastTrace += " | local decode failed";
   }
   return blobToMood(blob);
 }
@@ -120,6 +133,7 @@ async function pcmToMood(pcm: Float32Array): Promise<MoodReading | null> {
   });
   if (!res.ok) {
     console.error("[voice] emotion proxy failed:", res.status);
+    lastTrace += ` | server said ${res.status}`;
     return null;
   }
   return unwrapMood(await res.json());
@@ -135,11 +149,13 @@ async function blobToMood(blob: Blob): Promise<MoodReading | null> {
     });
     if (!res.ok) {
       console.error("[voice] emotion (file) proxy failed:", res.status);
+      lastTrace += ` | file server said ${res.status}`;
       return null;
     }
     return unwrapMood(await res.json());
   } catch (err: any) {
     console.error("[voice] emotion (file) unreachable:", err?.message ?? err);
+    lastTrace += " | file server unreachable";
     return null;
   }
 }
@@ -152,8 +168,10 @@ function unwrapMood(payload: { mood: MoodReading | null }): MoodReading | null {
       "[voice] prosody read:", mood.label,
       `valence ${mood.valence}, energy ${mood.energy}, conf ${mood.confidence}`
     );
+    lastTrace += ` | sidecar read ${mood.label} (${mood.confidence})`;
   } else {
     console.warn("[voice] prosody: sidecar read nothing from that clip");
+    lastTrace += " | sidecar read nothing";
   }
   return mood;
 }

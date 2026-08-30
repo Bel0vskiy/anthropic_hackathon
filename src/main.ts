@@ -1,7 +1,7 @@
 import { Room } from "./room";
 import { warmMood, readMood, type MoodReading } from "./mood";
 import { addUserMessage, startAssistantMessage, addSystemNote, updateStatus } from "./chat";
-import { startCapture, speak, speakEleven, stopSpeaking, type SpeechCapture } from "./voice";
+import { startCapture, speak, speakEleven, stopSpeaking, moodTrace, type SpeechCapture } from "./voice";
 
 const sessionId = crypto.randomUUID();
 
@@ -166,7 +166,7 @@ async function greet(name: string, hue: number): Promise<void> {
     const when = whenPhrase(mem.lastSeen);
     if (when) {
       parts.push(
-        `${when} you left the room${moodPhrase(mem.lastMood ? mem.lastMood.valence : 0)}.`
+        `${when} you left the room ${moodPhrase(mem.lastMood ? mem.lastMood.valence : 0)}.`
       );
     }
     // Someone who left the room low gets a warmer light to come back to —
@@ -459,7 +459,9 @@ micBtn.addEventListener("click", async () => {
       ttsOn = true; // you spoke first — the room answers out loud
       renderVoiceToggle();
       input.value = "";
-      const read = mood?.fromVoice ? null : "the room heard your words but not your tone (see console)";
+      const read = mood?.fromVoice
+        ? ""
+        : `the room heard your words but not your tone — ${moodTrace()}`;
       void send(transcript.trim(), mood);
       if (read) addSystemNote(read);
     } else {
