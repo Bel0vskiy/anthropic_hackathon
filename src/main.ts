@@ -139,9 +139,71 @@ gateForm.addEventListener("submit", (e) => {
 
   // The room notices you arrive — and turns to its color for the first time.
   room.pulse(1);
-  const lightName = SWATCHES.find((s) => s.hue === userHue)?.name ?? "your";
-  addSystemNote(`hello, ${name.toLowerCase()}. the room is lit ${lightName} for you.`);
+  void greet(name, userHue);
 });
+
+/** The room's hello: fresh, or a welcome-back that proves it remembers. */
+async function greet(name: string, hue: number): Promise<void> {
+  const lightName = SWATCHES.find((s) => s.hue === hue)?.name ?? "your";
+  try {
+    const res = await fetch(`/api/remember?name=${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error("remember failed");
+    const mem = (await res.json()) as {
+      known: boolean;
+      lastSeen: number;
+      lastMood: { label: string; valence: number } | null;
+      topic: string | null;
+    };
+    if (!mem.known) throw new Error("stranger");
+
+    const parts = [`welcome back, ${name.toLowerCase()}.`];
+    const when = whenPhrase(mem.lastSeen);
+    if (when) {
+      parts.push(
+        `${when} you left the room${moodPhrase(mem.lastMood ? mem.lastMood.valence : 0)}.`
+      );
+    }
+    // Someone who left the room low gets a warmer light to come back to —
+    // the promise in the note is a real change, not just words.
+    if (when && mem.lastMood && mem.lastMood.valence < -0.05) {
+      room.setBaseHue(hueToward(hue, 36, 0.3));
+      parts.push("it kept the light a little warmer for you.");
+    }
+    if (mem.topic) parts.push(`last time, it was about ${mem.topic}.`);
+    addSystemNote(parts.join(" "));
+  } catch {
+    addSystemNote(`hello, ${name.toLowerCase()}. the room is lit ${lightName} for you.`);
+  }
+}
+
+/** How long the room has been without them. */
+function whenPhrase(lastSeen: number): string | null {
+  const mins = Math.round((Date.now() - lastSeen) / 60000);
+  if (lastSeen === 0 || mins < 3) return null; // never really left
+  if (mins < 60) return `${mins} minutes ago,`;
+  const left = new Date(lastSeen);
+  const now = new Date();
+  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((day(now) - day(left)) / 86400000);
+  if (days === 0) return "earlier today,";
+  if (days === 1) return "yesterday,";
+  if (days < 14) return `${days} days ago,`;
+  return "a while ago,";
+}
+
+/** How they seemed when they left, in the room's small voice. */
+function moodPhrase(valence: number): string {
+  if (valence < -0.4) return "low";
+  if (valence < -0.05) return "a little low";
+  if (valence > 0.3) return "bright";
+  return "quiet";
+}
+
+/** Nudge a hue `amount` of the way toward a target, around the short arc. */
+function hueToward(hue: number, target: number, amount: number): number {
+  const d = ((target - hue + 540) % 360) - 180;
+  return (hue + d * amount + 360) % 360;
+}
 
 // --- the room ---------------------------------------------------------
 
@@ -165,7 +227,7 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
   void fetch("/api/topic", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ sessionId, name: userName, message }),
   })
     .then((r) => r.json())
     .then(({ topic }: { topic: string }) => {
@@ -181,6 +243,14 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
   mood = mergeMoods(voiceMood, mood);
   room.setMood(mood);
   updateStatus(mood?.label ?? null);
+
+  // Subtext: when the words and the voice tell different stories, the room
+  // gently says so — the one thing a default assistant never does.
+  if (mood?.divergent === "words") {
+    addSystemNote("your words say fine. your voice says otherwise.");
+  } else if (mood?.divergent === "voice") {
+    addSystemNote("your words sound low. your voice doesn't.");
+  }
 
   const append = startAssistantMessage();
   let spoken = "";
@@ -261,7 +331,11 @@ async function consumeSSE(
   }
 }
 
-/** Blend the voice reading with the text reading, weighted by confidence. */
+/**
+ * Blend the voice reading with the text reading, weighted by confidence.
+ * When the two channels disagree — "I'm fine" said flatly — mark it, instead
+ * of letting the average wash the truth out of both.
+ */
 function mergeMoods(
   voice: MoodReading | null,
   text: MoodReading | null
@@ -269,6 +343,11 @@ function mergeMoods(
   if (!voice) return text;
   if (!text) return voice;
   const wv = voice.confidence + text.confidence || 1;
+  // Divergence only counts when both readings are sure enough, and the gap
+  // between them is wide — a flat voice under positive words, or the reverse.
+  const sure = text.confidence > 0.8 && voice.confidence > 0.5;
+  const wordsBetter = sure && text.valence > 0.3 && text.valence - voice.valence > 0.45;
+  const voiceBetter = sure && text.valence < -0.3 && voice.valence - text.valence > 0.45;
   return {
     valence: (voice.valence * voice.confidence + text.valence * text.confidence) / wv,
     energy: (voice.energy * voice.confidence + text.energy * text.confidence) / wv,
@@ -276,6 +355,7 @@ function mergeMoods(
     label: voice.confidence >= text.confidence ? voice.label : text.label,
     confidence: Math.max(voice.confidence, text.confidence),
     fromVoice: true,
+    divergent: wordsBetter ? "words" : voiceBetter ? "voice" : null,
   };
 }
 

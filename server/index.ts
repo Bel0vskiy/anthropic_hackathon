@@ -4,18 +4,18 @@ import {
   chatTurn,
   tagTopic,
   buildSystemPrompt,
-  type ChatTurn,
   type MoodReading,
 } from "./claude.js";
 import { VOICES, hasVoiceKey, synthesize } from "./eleven.js";
+import { getPerson, savePerson, recall, type PersonMemory } from "./remember.js";
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
 
-// Per-session history kept in memory, keyed by client-generated session id.
-// A hackathon demo doesn't need persistence; a server restart resets the room.
-const sessions = new Map<string, ChatTurn[]>();
-// The name the room opened for, one per session. Set on first contact.
+// History, mood trail and time-of-last-goodbye live in the person memory
+// (server/remember.ts) keyed by name, so the room keeps working across
+// refreshes and restarts. The name the room opened for wins; later echoes
+// can't hijack it.
 const names = new Map<string, string>();
 
 interface ChatBody {
@@ -23,6 +23,24 @@ interface ChatBody {
   name?: string;
   message?: string;
   mood?: MoodReading | null;
+}
+
+/** A person key: stable across refreshes when a name is known. */
+function personKey(sessionId: string, name: string | null): string {
+  const n = name?.trim().toLowerCase();
+  return n ? `person:${n}` : `session:${sessionId}`;
+}
+
+function recordMood(mem: PersonMemory, mood: MoodReading | null): void {
+  if (!mood) return;
+  const stamp = {
+    t: Date.now(),
+    valence: mood.valence,
+    energy: mood.energy,
+    label: mood.label,
+  };
+  mem.moods.push(stamp);
+  mem.lastMood = stamp;
 }
 
 app.post("/api/chat", (req, res) => {
@@ -41,7 +59,21 @@ app.post("/api/chat", (req, res) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
-  const history = sessions.get(sessionId) ?? [];
+  // The name is given once at the gate and echoed by every later turn; the
+  // first one heard for a session wins, so late arrivals can't hijack it.
+  const key = personKey(sessionId, name ?? null);
+  if (typeof name === "string" && name.trim() && !names.has(key)) {
+    names.set(key, name.trim().slice(0, 40));
+  }
+  const displayName = names.get(key) ?? null;
+
+  const mem = getPerson(key, displayName);
+  if (displayName) mem.name = displayName;
+  // A gap of 30+ minutes counts as a return visit.
+  if (mem.lastSeen > 0 && Date.now() - mem.lastSeen > 30 * 60 * 1000) mem.visits += 1;
+  mem.visits = Math.max(mem.visits, 1);
+
+  const history = mem.history;
   const userMsg = message.slice(0, 4000);
   history.push({ role: "user", content: userMsg });
   // Visible test affordance: every turn shows what the room "sensed".
@@ -53,31 +85,45 @@ app.post("/api/chat", (req, res) => {
         label: mood.label,
         conf: mood.confidence,
         voice: !!mood.fromVoice,
+        divergent: mood.divergent ?? null,
       }
     )}`
   );
 
-  // The name is given once at the gate and echoed by every later turn; the
-  // first one heard for a session wins, so late arrivals can't hijack it.
-  if (typeof name === "string" && name.trim() && !names.has(sessionId)) {
-    names.set(sessionId, name.trim().slice(0, 40));
-  }
-  const displayName = names.get(sessionId) ?? null;
-
   chatTurn(history, mood, buildSystemPrompt(displayName), emit).then((updated) => {
-    sessions.set(sessionId, updated.slice(-40));
+    mem.history = updated.slice(-40);
+    recordMood(mem, mood);
+    savePerson(key, mem);
     res.end();
   });
 });
 
 app.post("/api/topic", async (req, res) => {
-  const { message } = req.body as ChatBody;
+  const { sessionId, name, message } = req.body as ChatBody;
   if (typeof message !== "string" || message.trim().length === 0) {
     res.status(400).json({ topic: "conversation" });
     return;
   }
   const topic = await tagTopic(message.slice(0, 4000));
+  // Keep the last topic on the person, so the welcome-back note can say it.
+  if (topic && topic !== "conversation") {
+    const key = personKey(sessionId ?? "default", name ?? null);
+    const mem = getPerson(key, name ?? null);
+    mem.topic = topic;
+    savePerson(key, mem);
+  }
   res.json({ topic });
+});
+
+// What the room remembers about someone approaching the door. The client
+// calls it as the gate opens, to greet a returning visitor properly.
+app.get("/api/remember", (req, res) => {
+  const name = typeof req.query.name === "string" ? req.query.name : "";
+  if (!name.trim()) {
+    res.json({ known: false, visits: 0, lastSeen: 0, lastMood: null, topic: null });
+    return;
+  }
+  res.json(recall(personKey("default", name)));
 });
 
 // The voices the gate offers, by name. Kept here so the client never sees

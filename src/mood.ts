@@ -7,6 +7,8 @@ export interface MoodReading {
   confidence: number;
   /** True when tonality from the mic contributed to this reading. */
   fromVoice?: boolean;
+  /** Set when words and voice disagree — which channel read better. */
+  divergent?: "words" | "voice" | null;
 }
 
 let classifier: TextClassificationPipeline | null = null;

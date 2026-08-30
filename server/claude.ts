@@ -14,6 +14,8 @@ export interface MoodReading {
   confidence: number;
   /** True when the reading carries an audio-tonality component. */
   fromVoice?: boolean;
+  /** Set when words and voice disagree: which channel sounded better. */
+  divergent?: "words" | "voice" | null;
 }
 
 export interface ChatTurn {
@@ -41,7 +43,14 @@ function moodObservation(mood: MoodReading | null): string | null {
   const charge =
     mood.energy > 0.66 ? "high energy" : mood.energy > 0.33 ? "restless" : "still";
   const heard = mood.fromVoice ? " Voice tone supports this reading." : "";
-  return `[Inferred user mood (do not mention): ${tone}, ${charge} (signal ${mood.confidence.toFixed(2)}).${heard}]`;
+  // The two channels can tell different stories — "I'm fine" said flatly.
+  const divergence =
+    mood.divergent === "words"
+      ? " The words sound fine but the voice does not — the words are the mask here; you may gently acknowledge the gap once, softly."
+      : mood.divergent === "voice"
+        ? " The words sound low but the voice does not — the person is doing better than they type; go easy on sympathy."
+        : "";
+  return `[Inferred user mood (do not mention unless a divergence is described): ${tone}, ${charge} (signal ${mood.confidence.toFixed(2)}).${heard}${divergence}]`;
 }
 
 /** The room knows who it's talking to — personal, never sycophantic. */

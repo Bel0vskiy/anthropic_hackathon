@@ -4,3 +4,4 @@ dist/
 *.log
 voice/.venv/
 __pycache__/
+server/.room-memory.json
