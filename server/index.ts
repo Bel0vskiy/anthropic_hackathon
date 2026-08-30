@@ -19,6 +19,10 @@ app.use(express.json({ limit: "256kb" }));
 // can't hijack it.
 const names = new Map<string, string>();
 
+// AbortControllers for turn(s) currently streaming, keyed by session —
+// the room can be told to stop mid-sentence.
+const activeTurns = new Map<string, AbortController>();
+
 interface ChatBody {
   sessionId?: string;
   name?: string;
@@ -50,6 +54,10 @@ app.post("/api/chat", (req, res) => {
     res.status(400).json({ error: "message required" });
     return;
   }
+
+  // One in-flight turn per session, held so /api/stop can cut the stream.
+  const stop = new AbortController();
+  activeTurns.set(sessionId, stop);
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -91,12 +99,29 @@ app.post("/api/chat", (req, res) => {
     )}`
   );
 
-  chatTurn(history, mood, buildSystemPrompt(displayName), emit).then((updated) => {
-    mem.history = updated.slice(-40);
-    recordMood(mem, mood);
-    savePerson(key, mem);
-    res.end();
-  });
+  chatTurn(history, mood, buildSystemPrompt(displayName), emit, stop.signal).then(
+    (updated) => {
+      activeTurns.delete(sessionId);
+      mem.history = updated.slice(-40);
+      recordMood(mem, mood);
+      savePerson(key, mem);
+      res.end();
+    }
+  );
+});
+
+// A deliberate stop: cut the room's stream, keep what was already said.
+app.post("/api/stop", (req, res) => {
+  const { sessionId = "default" } = req.body as ChatBody;
+  const cut = activeTurns.get(sessionId);
+  if (!cut) {
+    res.json({ stopped: false });
+    return;
+  }
+  cut.abort();
+  activeTurns.delete(sessionId);
+  console.log(`[room] turn ${sessionId} stopped mid-stream`);
+  res.json({ stopped: true });
 });
 
 app.post("/api/topic", async (req, res) => {

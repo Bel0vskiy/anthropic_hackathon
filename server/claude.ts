@@ -73,7 +73,8 @@ export async function chatTurn(
   history: ChatTurn[],
   mood: MoodReading | null,
   system: string,
-  emit: EmitEvent
+  emit: EmitEvent,
+  signal?: AbortSignal
 ): Promise<ChatTurn[]> {
   const messages: Anthropic.MessageParam[] = history.map((t) => ({
     role: t.role,
@@ -97,18 +98,28 @@ export async function chatTurn(
   // is visible to the user but lands in the same message as the tool_use —
   // carry it so the final history entry keeps everything that was said.
   let carriedText = "";
+  // Tokens of the response currently streaming, so a deliberate stop can
+  // keep the sentence half-said rather than losing it.
+  let lastPartial = "";
 
   try {
     for (let i = 0; i <= MAX_TOOL_ITERATIONS; i++) {
-      const stream = client.messages.stream({
-        model: MODEL,
-        max_tokens: 2000,
-        system,
-        tools: roomTools,
-        messages,
-      });
+      lastPartial = "";
+      const stream = client.messages.stream(
+        {
+          model: MODEL,
+          max_tokens: 2000,
+          system,
+          tools: roomTools,
+          messages,
+        },
+        { signal }
+      );
 
-      stream.on("text", (text) => emit({ type: "token", text }));
+      stream.on("text", (text) => {
+        lastPartial += text;
+        emit({ type: "token", text });
+      });
 
       const response = await stream.finalMessage();
       const blockText = response.content
@@ -126,6 +137,7 @@ export async function chatTurn(
       // Tool-use turn: append the full response content, execute every
       // tool_use block, and reply with all tool_results in one user message.
       carriedText += blockText;
+      lastPartial = "";
       messages.push({ role: "assistant", content: response.content });
       const results = response.content
         .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
@@ -142,13 +154,14 @@ export async function chatTurn(
       role: "user",
       content: [{ type: "text", text: "(no more tool calls — just reply)" }],
     });
-    const stream = client.messages.stream({
-      model: MODEL,
-      max_tokens: 2000,
-      system,
-      messages,
+    const stream = client.messages.stream(
+      { model: MODEL, max_tokens: 2000, system, messages },
+      { signal }
+    );
+    stream.on("text", (text) => {
+      lastPartial += text;
+      emit({ type: "token", text });
     });
-    stream.on("text", (text) => emit({ type: "token", text }));
     const final = await stream.finalMessage();
     const text = (
       carriedText +
@@ -161,6 +174,14 @@ export async function chatTurn(
     emit({ type: "done" });
     return historyOut;
   } catch (err: any) {
+    // A deliberate stop isn't a failure: keep what the room already said.
+    const aborted = err?.name === "AbortError" || /abort/i.test(err?.message ?? "");
+    if (aborted) {
+      const text = (carriedText + lastPartial).trim();
+      if (text) historyOut.push({ role: "assistant", content: text });
+      emit({ type: "done" });
+      return historyOut;
+    }
     console.error("[claude] turn failed:", err?.message ?? err);
     emit({
       type: "error",

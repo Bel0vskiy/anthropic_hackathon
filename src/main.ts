@@ -224,6 +224,27 @@ const room = new Room(document.getElementById("room") as HTMLCanvasElement);
 
 // --- chat over SSE ----------------------------------------------------
 
+// True while the room is mid-reply. Submitting again then doesn't queue a
+// new message — it stops the one being said.
+let streaming = false;
+let replyAbort: AbortController | null = null;
+
+/** Cut the room off mid-sentence: server aborts its stream, the client
+ *  drops the rest. What was already said stays said. */
+async function stopReply(): Promise<void> {
+  const sessionIdForStop = sessionId;
+  replyAbort?.abort();
+  try {
+    await fetch("/api/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: sessionIdForStop }),
+    });
+  } catch {
+    /* the client abort is the one that matters */
+  }
+}
+
 async function send(message: string, voiceMood: MoodReading | null = null): Promise<void> {
   room.pulse(0.5);
   addUserMessage(message);
@@ -267,10 +288,14 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
   let firstToken = true;
 
   try {
+    streaming = true;
+    renderSubmitButton();
+    replyAbort = new AbortController();
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId, name: userName, message, mood }),
+      signal: replyAbort.signal,
     });
     if (!res.ok || !res.body) {
       throw new Error(`chat request failed (${res.status})`);
@@ -293,10 +318,21 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
         addSystemNote(String(event.message));
       }
     });
-  } catch (err) {
-    console.error(err);
-    addSystemNote("connection failed — try again");
-    if (spoken) append(spoken); // never lose the reply the room already said
+  } catch (err: any) {
+    const aborted =
+      err?.name === "AbortError" || /abort/i.test(err?.message ?? "");
+    if (aborted) {
+      // A deliberate stop isn't a failure — flush what was half-said.
+      if (spoken && !ttsOn) append(spoken);
+    } else {
+      console.error(err);
+      addSystemNote("connection failed — try again");
+      if (spoken && !ttsOn) append(spoken); // never lose the reply already said
+    }
+  } finally {
+    streaming = false;
+    replyAbort = null;
+    renderSubmitButton();
   }
 
   // The room speaks — in the voice chosen at the gate, with the mood of the
@@ -350,7 +386,8 @@ async function consumeSSE(
 
 /**
  * Reveal the reply as it's voiced: the page writes at the pace the room
- * speaks, so you hear the line as it appears rather than reading ahead.
+ * speaks, running a little ahead of the audio cursor — reading is faster
+ * than hearing, so text waits shouldn't compound with the voice lag.
  * Falls back to a flush if the audio's duration isn't known, or on end.
  */
 function revealWithVoice(
@@ -358,13 +395,14 @@ function revealWithVoice(
   append: (chunk: string) => void,
   audio: HTMLAudioElement
 ): void {
+  const LEAD_S = 1.2; // seconds the text stays ahead of the voice
   let shown = 0;
   const tick = () => {
     const dur = audio.duration;
     if (Number.isFinite(dur) && dur > 0) {
       const target = Math.min(
         text.length,
-        Math.floor((audio.currentTime / dur) * text.length)
+        Math.floor(((audio.currentTime + LEAD_S) / dur) * text.length)
       );
       if (target > shown) {
         append(text.slice(shown, target));
@@ -430,6 +468,14 @@ const form = document.getElementById("composer") as HTMLFormElement;
 const input = document.getElementById("input") as HTMLInputElement;
 const micBtn = document.getElementById("mic") as HTMLButtonElement;
 const voiceToggle = document.getElementById("voice-toggle") as HTMLButtonElement;
+const sendBtn = document.getElementById("send") as HTMLButtonElement;
+
+// While the room speaks, the send key becomes a stop key — the same place
+// your hand already is, one press to cut it off.
+function renderSubmitButton(): void {
+  sendBtn.textContent = streaming ? "■" : "↵";
+  sendBtn.setAttribute("aria-label", streaming ? "stop the room" : "send");
+}
 
 // Voice's only visible control: the speaker switch in the composer. It also
 // flips on by itself after the first mic turn — you spoke, it answers.
@@ -446,6 +492,9 @@ voiceToggle.addEventListener("click", () => {
 });
 
 let recording: SpeechCapture | null = null;
+// The last transcript actually sent — an empty stop sometimes replays the
+// recognition engine's stale result, and the room shouldn't hear it twice.
+let lastSent = "";
 
 /** Feed the room your live voice while the mic is open — it leans in. */
 function pollMicLevel(): void {
@@ -472,15 +521,23 @@ micBtn.addEventListener("click", async () => {
     micBtn.textContent = "◉";
     input.placeholder = "message…";
     if (transcript.trim()) {
-      ttsOn = true; // you spoke first — the room answers out loud
-      renderVoiceToggle();
-      input.value = "";
-      const read = mood?.fromVoice
-        ? ""
-        : `the room heard your words but not your tone — ${moodTrace()}`;
-      void send(transcript.trim(), mood);
-      if (read) addSystemNote(read);
+      const said = transcript.trim();
+      if (said === lastSent) {
+        // A silent stop replayed the previous turn — don't send it again.
+        addSystemNote("the room already heard those words — it won't ask twice");
+      } else {
+        lastSent = said;
+        ttsOn = true; // you spoke first — the room answers out loud
+        renderVoiceToggle();
+        input.value = "";
+        const read = mood?.fromVoice
+          ? ""
+          : `the room heard your words but not your tone — ${moodTrace()}`;
+        void send(said, mood);
+        if (read) addSystemNote(read);
+      }
     } else {
+      input.value = "";
       addSystemNote("I didn't catch that — hold the mic a little longer");
     }
     return;
@@ -503,6 +560,11 @@ micBtn.addEventListener("click", async () => {
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
+  // Mid-reply, a submit means stop — not queue another message on top.
+  if (streaming) {
+    void stopReply();
+    return;
+  }
   const message = input.value.trim();
   if (!message || input.disabled) return;
   input.value = "";
