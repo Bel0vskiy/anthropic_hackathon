@@ -140,6 +140,12 @@ gateForm.addEventListener("submit", (e) => {
   // The room notices you arrive — and turns to its color for the first time.
   room.pulse(1);
   void greet(name, userHue);
+
+  // The mood model waits for an idle moment after entering — loading it
+  // behind the gate steals frames from typing.
+  (window.requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 1200)))(() =>
+    warmMood()
+  );
 });
 
 /** The room's hello: fresh, or a welcome-back that proves it remembers. */
@@ -208,7 +214,6 @@ function hueToward(hue: number, target: number, amount: number): number {
 // --- the room ---------------------------------------------------------
 
 const room = new Room(document.getElementById("room") as HTMLCanvasElement);
-warmMood();
 
 // Test affordances for the browser console:
 //   __mood("i am furious")        -> raw text-classifier reading

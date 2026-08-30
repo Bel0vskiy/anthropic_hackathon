@@ -163,7 +163,9 @@ export class Room {
   }
 
   private resize(): void {
-    const dpr = Math.min(window.devicePixelRatio ?? 1, 2);
+    // Capped at 1.5×: soft glows don't read the difference, but the fill
+    // cost of seven full-screen gradients does.
+    const dpr = Math.min(window.devicePixelRatio ?? 1, 1.5);
     this.canvas.width = window.innerWidth * dpr;
     this.canvas.height = window.innerHeight * dpr;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

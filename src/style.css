@@ -190,15 +190,16 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(233, 234, 240, 0.4);
-  backdrop-filter: blur(2px);
-  transition: opacity 0.9s ease, backdrop-filter 1.1s ease;
+  /* No backdrop-filter: the room canvas repaints every frame, and a blur
+     over it costs a full-screen re-filter per frame. A wash of paper is
+     just as soft, and free. */
+  background: rgba(233, 234, 240, 0.72);
+  transition: opacity 0.9s ease;
 }
 
 #gate.open {
   opacity: 0;
   pointer-events: none;
-  backdrop-filter: blur(0px);
 }
 
 #gate-form {
