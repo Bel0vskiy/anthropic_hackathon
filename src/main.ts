@@ -5,8 +5,8 @@ import { startCapture, speak, speakEleven, stopSpeaking, type SpeechCapture } fr
 
 const sessionId = crypto.randomUUID();
 
-// Whether the room speaks its replies out loud. Toggled in the status strip.
-let ttsOn = false; // flips on automatically after the first mic turn
+// Whether the room speaks its replies out loud. Toggled in the composer.
+let ttsOn = true; // the room answers out loud unless you mute it
 
 // --- the name ---------------------------------------------------------
 // The room can't be personal to a stranger. The gate asks once; afterwards
@@ -278,7 +278,9 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
           firstToken = false;
           room.pulse(0.35);
         }
-        append(event.text as string);
+        // With the voice on, words wait for the sound —
+        // text is revealed in step with the room speaking it.
+        if (!ttsOn) append(event.text as string);
       } else if (event.type === "room") {
         const { type: _t, tool: _tool, ...roomState } = event;
         room.setRoom(roomState);
@@ -289,15 +291,20 @@ async function send(message: string, voiceMood: MoodReading | null = null): Prom
   } catch (err) {
     console.error(err);
     addSystemNote("connection failed — try again");
+    if (spoken) append(spoken); // never lose the reply the room already said
   }
 
   // The room speaks — in the voice chosen at the gate, with the mood of the
   // moment bent into it. If elevenlabs is quiet, browser speech answers.
   if (ttsOn && spoken) {
-    speakEleven(spoken, chosenVoice, mood).catch((err) => {
+    try {
+      const audio = await speakEleven(spoken, chosenVoice, mood);
+      revealWithVoice(spoken, append, audio);
+    } catch (err: any) {
       console.error("[voice] elevenlabs unavailable:", err.message);
+      append(spoken);
       speak(spoken, room.voiceParams());
-    });
+    }
   }
 
   const input = document.getElementById("input") as HTMLInputElement;
@@ -334,6 +341,38 @@ async function consumeSSE(
       }
     }
   }
+}
+
+/**
+ * Reveal the reply as it's voiced: the page writes at the pace the room
+ * speaks, so you hear the line as it appears rather than reading ahead.
+ * Falls back to a flush if the audio's duration isn't known, or on end.
+ */
+function revealWithVoice(
+  text: string,
+  append: (chunk: string) => void,
+  audio: HTMLAudioElement
+): void {
+  let shown = 0;
+  const tick = () => {
+    const dur = audio.duration;
+    if (Number.isFinite(dur) && dur > 0) {
+      const target = Math.min(
+        text.length,
+        Math.floor((audio.currentTime / dur) * text.length)
+      );
+      if (target > shown) {
+        append(text.slice(shown, target));
+        shown = target;
+      }
+    }
+    if (shown < text.length && !audio.paused && !audio.ended) {
+      requestAnimationFrame(tick);
+    } else if (shown < text.length) {
+      append(text.slice(shown));
+    }
+  };
+  requestAnimationFrame(tick);
 }
 
 /**

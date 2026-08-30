@@ -192,12 +192,13 @@ async function finalTranscript(
 let currentAudio: HTMLAudioElement | null = null;
 let currentUrl: string | null = null;
 
-/** ElevenLabs playback. Throws if the room's real voice is unavailable. */
+/** ElevenLabs playback. Throws if the room's real voice is unavailable.
+ *  Resolves with the playing audio element so text can be revealed in step. */
 export async function speakEleven(
   text: string,
   voice: string,
   mood: MoodReading | null
-): Promise<void> {
+): Promise<HTMLAudioElement> {
   const res = await fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -218,6 +219,7 @@ export async function speakEleven(
     }
   };
   await audio.play();
+  return audio;
 }
 
 export function speak(text: string, params: { rate: number; pitch: number }): void {
