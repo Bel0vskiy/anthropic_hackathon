@@ -11,6 +11,8 @@ const TARGET_RATE = 16000;
 
 export interface SpeechCapture {
   stop(): Promise<{ transcript: string; mood: MoodReading | null }>;
+  /** Live mic loudness, 0..1 — for the orb leaning in. */
+  level(): number;
 }
 
 /** Start mic capture + STT. Returns a handle to finish the turn. */
@@ -18,6 +20,12 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
   let recorder: MediaRecorder | null = null;
   let chunks: Blob[] = [];
   let stopped = false;
+
+  // The orb listens here: an analyser on the live stream turns your voice
+  // into a single number the room can lean with.
+  let analyser: AnalyserNode | null = null;
+  let analyserCtx: AudioContext | null = null;
+  let samples: Uint8Array | null = null;
 
   const stt = Promise.resolve(startSTT(onInterim)).catch((err) => {
     console.error("[voice] STT unavailable:", err.message);
@@ -40,7 +48,22 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
           return null;
         }) : Promise.resolve(null),
       ]);
+      void analyserCtx?.close();
+      analyser = null;
+      analyserCtx = null;
       return { transcript, mood };
+    },
+
+    level(): number {
+      if (!analyser || !samples) return 0;
+      analyser.getByteTimeDomainData(samples as Uint8Array<ArrayBuffer>);
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const v = (samples[i] - 128) / 128;
+        sum += v * v;
+      }
+      // Speech RMS sits ~0.02–0.25; scale into a usable 0..1.
+      return Math.min(1, Math.sqrt(sum / samples.length) * 4);
     },
   };
 
@@ -52,6 +75,13 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
     };
     window.addEventListener("beforeunload", () => stream.getTracks().forEach((t) => t.stop()));
     recorder.start();
+
+    analyserCtx = new AudioContext();
+    const source = analyserCtx.createMediaStreamSource(stream);
+    analyser = analyserCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    samples = new Uint8Array(analyser.fftSize);
   })().catch((err) => {
     console.error("[voice] mic denied:", err);
     throw new Error("microphone unavailable");

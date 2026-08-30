@@ -129,6 +129,11 @@ export class Room {
 
   private mouse: { x: number; y: number; seen: number } | null = null;
 
+  // Listening: raw level from the mic, and a low-passed copy the body uses.
+  private micLevel = 0;
+  private micLive = false;
+  private micSmooth = 0;
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
@@ -228,6 +233,15 @@ export class Room {
     this.target.topicStrength = 0.35;
   }
 
+  /**
+   * Live mic loudness while the person speaks. The orb leans toward them
+   * and its backlight swells with the voice — the room listening.
+   */
+  setMicLevel(level: number, live: boolean): void {
+    this.micLevel = level;
+    this.micLive = live;
+  }
+
   /** An elastic kick. Called when messages arrive; strength ~0..1.5. */
   pulse(strength = 1): void {
     this.vr += 16 * strength;
@@ -321,6 +335,10 @@ export class Room {
     const h = window.innerHeight;
     const ctx = this.ctx;
 
+    // The listening level follows the voice fast enough to feel live, slow
+    // enough not to flicker.
+    this.micSmooth = lerp(this.micSmooth, this.micLive ? this.micLevel : 0, 0.18);
+
     // Smooth every state field toward its target.
     const s = this.state;
     const t = this.target;
@@ -386,9 +404,11 @@ export class Room {
 
     const POS_K = 0.018;
     const POS_DAMP = 0.93;
+    // While you speak, the orb leans in — toward the conversation, where you are.
+    const listenLean = this.micSmooth * 16;
     this.ovx += (wanderX + this.leanX - this.cxo) * POS_K;
     this.ovx *= POS_DAMP;
-    this.ovy += (wanderY + this.leanY - this.cyo) * POS_K;
+    this.ovy += (wanderY + this.leanY + listenLean - this.cyo) * POS_K;
     this.ovy *= POS_DAMP;
     this.cxo += this.ovx;
     this.cyo += this.ovy;
@@ -439,10 +459,12 @@ export class Room {
     // Mid halo.
     halo(ctx, cx, cy, this.r * 2.6, `rgba(${ar},${ag},${ab},${0.26 + 0.1 * sat})`);
     // Backlight: a hot disc hugging the orb — the light source itself.
+    // A live voice swells it: the room's attention made of light.
+    const swell = this.micSmooth;
     if (this.state.weather === "storm") {
-      halo(ctx, cx, cy, this.r * 1.5, `rgba(${ar},${ag},${ab},${flicker(this.t) * 0.5})`);
+      halo(ctx, cx, cy, this.r * (1.5 + swell * 0.5), `rgba(${ar},${ag},${ab},${flicker(this.t) * (0.5 + swell * 0.2)})`);
     } else {
-      halo(ctx, cx, cy, this.r * 1.5, `rgba(${ar},${ag},${ab},0.5)`);
+      halo(ctx, cx, cy, this.r * (1.5 + swell * 0.5), `rgba(${ar},${ag},${ab},${Math.min(0.9, 0.5 + swell * 0.3)})`);
     }
 
     // Weather, kept quiet.

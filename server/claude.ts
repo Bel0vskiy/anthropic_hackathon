@@ -93,6 +93,10 @@ export async function chatTurn(
   }
 
   const historyOut = [...history];
+  // Text the model says on its way to a tool call ("let me dim that for you")
+  // is visible to the user but lands in the same message as the tool_use —
+  // carry it so the final history entry keeps everything that was said.
+  let carriedText = "";
 
   try {
     for (let i = 0; i <= MAX_TOOL_ITERATIONS; i++) {
@@ -107,20 +111,21 @@ export async function chatTurn(
       stream.on("text", (text) => emit({ type: "token", text }));
 
       const response = await stream.finalMessage();
+      const blockText = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("");
 
       if (response.stop_reason !== "tool_use") {
-        const text =
-          response.content
-            .filter((b): b is Anthropic.TextBlock => b.type === "text")
-            .map((b) => b.text)
-            .join("") || "";
-        historyOut.push({ role: "assistant", content: text });
+        const text = (carriedText + blockText).trim();
+        if (text) historyOut.push({ role: "assistant", content: text });
         emit({ type: "done" });
         return historyOut;
       }
 
       // Tool-use turn: append the full response content, execute every
       // tool_use block, and reply with all tool_results in one user message.
+      carriedText += blockText;
       messages.push({ role: "assistant", content: response.content });
       const results = response.content
         .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
@@ -145,12 +150,14 @@ export async function chatTurn(
     });
     stream.on("text", (text) => emit({ type: "token", text }));
     const final = await stream.finalMessage();
-    const text =
+    const text = (
+      carriedText +
       final.content
         .filter((b): b is Anthropic.TextBlock => b.type === "text")
         .map((b) => b.text)
-        .join("") || "";
-    historyOut.push({ role: "assistant", content: text });
+        .join("")
+    ).trim();
+    if (text) historyOut.push({ role: "assistant", content: text });
     emit({ type: "done" });
     return historyOut;
   } catch (err: any) {

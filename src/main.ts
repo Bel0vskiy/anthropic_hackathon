@@ -382,6 +382,16 @@ voiceToggle.addEventListener("click", () => {
 
 let recording: SpeechCapture | null = null;
 
+/** Feed the room your live voice while the mic is open — it leans in. */
+function pollMicLevel(): void {
+  if (!recording) {
+    room.setMicLevel(0, false);
+    return;
+  }
+  room.setMicLevel(recording.level(), true);
+  requestAnimationFrame(pollMicLevel);
+}
+
 micBtn.addEventListener("click", async () => {
   if (!userName) {
     addSystemNote("the door opens after a name");
@@ -393,6 +403,7 @@ micBtn.addEventListener("click", async () => {
     micBtn.classList.remove("live");
     const { transcript, mood } = await recording.stop();
     recording = null;
+    room.setMicLevel(0, false);
     micBtn.textContent = "◉";
     input.placeholder = "message…";
     if (transcript.trim()) {
@@ -412,6 +423,7 @@ micBtn.addEventListener("click", async () => {
     recording = startCapture((text) => {
       input.value = text;
     });
+    pollMicLevel();
     micBtn.textContent = "■";
   } catch (err: any) {
     micBtn.classList.remove("live");
