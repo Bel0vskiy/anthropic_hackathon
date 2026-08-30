@@ -1,0 +1,10 @@
+# Keep both deploy images lean — and never ship the local .env into an image.
+node_modules
+dist
+.git
+voice/.venv
+voice/__pycache__
+__pycache__
+.env
+*.log
+server/.room-memory.json

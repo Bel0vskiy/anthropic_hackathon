@@ -1,0 +1,29 @@
+# The room's node service: serves the built SPA + the /api backend, and proxies
+# audio to the Python sidecar (Dockerfile.voice) at $VOICE_URL.
+#
+# Railway: new service -> build from Dockerfile -> Dockerfile path "Dockerfile.node".
+FROM node:22-slim
+
+# ffmpeg is only for the /api/voice-emotion-file decode fallback; the browser's
+# in-page decode path (the common one) works without it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Locked deps first (fast layer caching), then the source, then build.
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+# typecheck + build the SPA into dist/, which the server serves at runtime.
+RUN npm run build
+
+ENV NODE_ENV=production
+# Railway injects $PORT at runtime; sane default for a local `docker run`.
+ENV PORT=8787
+
+EXPOSE 8787
+CMD ["npm", "run", "start:prod"]

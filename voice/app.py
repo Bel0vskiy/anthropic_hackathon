@@ -9,6 +9,7 @@ First start downloads the weights (~1.2 GB) into the HF cache.
 
 import numpy as np
 import torch
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from transformers import (
     AutoProcessor,
@@ -16,7 +17,17 @@ from transformers import (
     Wav2Vec2PreTrainedModel,
 )
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Warm the model at boot so the first /emotion call isn't slow. The
+    # weights are already cached in the image (see warm.py, run at build
+    # time) — this just loads them into memory (~10s) before traffic hits.
+    load_model()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 # superb/hubert-large-superb-er ignored prosody entirely (stamped "bright" on
 # everything), so we use a continuous arousal/valence model trained on real

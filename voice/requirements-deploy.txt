@@ -1,0 +1,9 @@
+# Slim requirements for the deployed sidecar (voice/Dockerfile.voice).
+# Everything the API actually needs at runtime. torch is installed separately
+# in the Dockerfile as a CPU-only build, so it's not repeated here.
+# sounddevice is deliberately absent — it's only used by talk.py (local mic
+# test) and pulls in PortAudio, which has no headless build value.
+fastapi>=0.115
+uvicorn>=0.30
+transformers>=4.44,<5
+numpy>=1.26

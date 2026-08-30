@@ -1,5 +1,8 @@
 import "dotenv/config";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import {
   chatTurn,
@@ -274,6 +277,22 @@ app.post(
     }
   }
 );
+
+// Production only: mount the built SPA (dist/) next to the API so a single
+// origin serves everything — no CORS, and /api keeps its path. In dev the
+// Vite server does this job and proxies /api here; there is no dist/ to serve,
+// so this block is skipped entirely.
+const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
+if (fs.existsSync(DIST)) {
+  app.use(express.static(DIST));
+  // SPA fallback: a refresh on any route still renders the room. API routes
+  // are registered above; unmatched GETs under /api pass through to 404.
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || req.path.startsWith("/api/")) return next();
+    res.sendFile(path.join(DIST, "index.html"));
+  });
+  console.log(`[room] serving UI from ${DIST}`);
+}
 
 const PORT = process.env.PORT ?? 8787;
 app.listen(PORT, () => {
