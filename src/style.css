@@ -104,6 +104,18 @@ body {
   align-self: flex-start;
 }
 
+.msg b {
+  font-weight: 600;
+}
+
+.msg code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(24, 27, 38, 0.07);
+}
+
 @keyframes rise {
   from {
     opacity: 0;

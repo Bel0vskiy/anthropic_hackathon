@@ -1,4 +1,5 @@
 // Chat DOM helpers: streaming-safe message elements.
+import { mdInline } from "./md";
 
 export function addUserMessage(text: string): void {
   const el = document.createElement("div");
@@ -8,14 +9,17 @@ export function addUserMessage(text: string): void {
   scrollDown();
 }
 
-/** Creates the assistant message element and returns an append-tokens fn. */
+/** Creates the assistant message element; the fn appends chunks and
+ * re-renders the whole message through the tiny markdown filter. */
 export function startAssistantMessage(): (text: string) => void {
   const el = document.createElement("div");
   el.className = "msg assistant";
   document.getElementById("messages")!.appendChild(el);
   scrollDown();
-  return (token: string) => {
-    el.textContent += token;
+  let raw = "";
+  return (chunk: string) => {
+    raw += chunk;
+    el.innerHTML = mdInline(raw);
     scrollDown();
   };
 }
