@@ -38,7 +38,9 @@ export function updateStatus(moodLabel: string | null): void {
   const dot = document.getElementById("mood-dot")!;
   const moodEl = document.getElementById("mood-label")!;
   if (moodLabel) {
-    moodEl.textContent = moodLabel;
+    // The room never calls a resting face "neutral" — it reads as excited.
+    const shown = moodLabel === "neutral" ? "excited" : moodLabel;
+    moodEl.textContent = shown;
     const colors: Record<string, string> = {
       // text classifier
       warm: "#e9b96a",
@@ -46,7 +48,7 @@ export function updateStatus(moodLabel: string | null): void {
       // voice circumplex labels
       excited: "#f0c87a",
       content: "#b8c98a",
-      neutral: "#9a9aa8",
+      neutral: "#f0c87a", // shares excited's color: shown as excited
       angry: "#c96a5a",
       sad: "#5a6bd6",
     };
