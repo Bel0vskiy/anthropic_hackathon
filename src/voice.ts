@@ -34,14 +34,50 @@ export function startCapture(onInterim: (text: string) => void): SpeechCapture {
   let analyserCtx: AudioContext | null = null;
   let samples: Uint8Array | null = null;
 
-  const stt = Promise.resolve(startSTT(onInterim)).catch((err) => {
-    console.error("[voice] STT unavailable:", err.message);
-    return null;
-  });
-
   // A mic failure used to be rethrown into an unhandled rejection — invisible.
   // Now it's a breadcrumb, and stop() can name it.
   let micError: string | null = null;
+
+  // The mic opens FIRST; STT starts once it's open. Chrome won't grant both
+  // capture paths at once — starting STT first left getUserMedia hanging
+  // forever, and turns went out with words but no tone.
+  const micReady = (async () => {
+    lastTrace = "asking for mic…";
+    const stream = await Promise.race([
+      navigator.mediaDevices.getUserMedia({ audio: true }),
+      new Promise<never>((_, rej) =>
+        setTimeout(
+          () => rej(new Error("timed out — is a permission prompt hidden?")),
+          6000
+        )
+      ),
+    ]);
+    lastTrace = "mic open";
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    window.addEventListener("beforeunload", () => stream.getTracks().forEach((t) => t.stop()));
+    recorder.start();
+
+    analyserCtx = new AudioContext();
+    const source = analyserCtx.createMediaStreamSource(stream);
+    analyser = analyserCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    samples = new Uint8Array(analyser.fftSize);
+  })().catch((err) => {
+    console.error("[voice] mic denied:", err);
+    micError = err?.message ?? String(err);
+    lastTrace = `mic failed: ${micError}`;
+  });
+
+  // STT rides after the mic — or alone, if the mic refused: the words still
+  // matter when the tone doesn't come.
+  const stt = micReady.then(() => startSTT(onInterim)).catch((err) => {
+    console.error("[voice] STT unavailable:", err.message);
+    return null;
+  });
 
   return {
     async stop(): Promise<{ transcript: string; mood: MoodReading | null }> {
