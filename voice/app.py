@@ -79,15 +79,15 @@ def label_for(valence: float, arousal: float) -> str:
     Both inputs are raw model values ~0..1 (midpoint 0.5). happy/sad/angry
     are quadrants of those axes — not separate classifier outputs.
 
-    The sad bar sits at raw 0.65 (normalized valence 0.3), not the classic
-    0.45 midpoint: this regression model under-reads sadness, so soft,
-    low-energy voices were landing at ~0.6 and getting stamped "content".
-    User-tuned 2026-08-30 — anything below that reads sad unless it's loud,
-    and loud+low reads angry.
+    Reverted to the classic bars (raw 0.55 / 0.45) per user 2026-08-30, with
+    the excited bar lowered to raw 0.5 on both axes (from 0.55): mid-positive
+    valence with mid energy must read excited, not neutral/content.
     """
-    if valence < 0.65:
+    if valence > 0.5:
+        return "excited" if arousal > 0.5 else "content"
+    if valence < 0.45:
         return "angry" if arousal > 0.55 else "sad"
-    return "excited" if arousal > 0.55 else "content"
+    return "neutral"
 
 
 @app.post("/emotion")
