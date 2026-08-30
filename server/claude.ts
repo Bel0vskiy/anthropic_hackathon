@@ -41,7 +41,11 @@ function moodObservation(mood: MoodReading | null): string | null {
             ? "low"
             : "heavy";
   const charge =
-    mood.energy > 0.66 ? "high energy" : mood.energy > 0.33 ? "restless" : "still";
+    mood.energy > 0.7
+      ? "high energy"
+      : mood.energy > 0.35
+        ? "even energy"
+        : "still";
   const heard = mood.fromVoice ? " Voice tone supports this reading." : "";
   // The two channels can tell different stories — "I'm fine" said flatly.
   const divergence =
@@ -50,7 +54,7 @@ function moodObservation(mood: MoodReading | null): string | null {
       : mood.divergent === "voice"
         ? " The words sound low but the voice does not — the person is doing better than they type; go easy on sympathy."
         : "";
-  return `[Inferred user mood (do not mention unless a divergence is described): ${tone}, ${charge} (signal ${mood.confidence.toFixed(2)}).${heard}${divergence}]`;
+  return `[Inferred user mood (background context — mild or neutral readings need no comment and no check-in; only clearly low or heavy moods call for acknowledgement, and only if the conversation invites it): ${tone}, ${charge} (signal ${mood.confidence.toFixed(2)}).${heard}${divergence}]`;
 }
 
 /** The room knows who it's talking to — personal, never sycophantic. */

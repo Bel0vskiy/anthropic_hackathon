@@ -442,12 +442,18 @@ function mergeMoods(
     confidence: Math.max(voice.confidence, text.confidence),
   };
 
-  // Divergence: a wide gap between words and voice, with the tone sure
-  // enough to mean it. (Sidecar confidence floors at 0.35 for flat speech —
-  // that's "neutral, no signal", so it can't trigger a divergence alone.)
+  // Divergence needs a wide gap AND a voice that actually sounds off — the
+  // text classifier grades neutral requests at the extremes, so "less
+  // positive than the words" is normal speech, not a mask.
   const gap = text.valence - voice.valence;
   const divergent =
-    voice.confidence > 0.3 ? (gap > 0.5 ? "words" : gap < -0.5 ? "voice" : null) : null;
+    voice.confidence > 0.3
+      ? voice.valence < -0.1 && gap > 0.5
+        ? "words"
+        : text.valence < -0.1 && gap < -0.5
+          ? "voice"
+          : null
+      : null;
   if (!divergent) {
     return { ...blended, fromVoice: true, divergent: null };
   }
